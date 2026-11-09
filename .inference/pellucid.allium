@@ -229,10 +229,12 @@
 --
 --   D15. THE GATE. scripts/check.fish runs purs-tidy check, spago build
 --        --strict (warnings are errors), spago test, cargo fmt --check,
---        cargo clippy -D warnings and cargo test for the core crate, and
---        cargo clippy -D warnings for the shell. The decoder tests run
---        against fixtures shaped like the server's transformers. Nothing
---        is delivered with a warning.
+--        cargo clippy -D warnings and cargo test for the core crate, the
+--        frontend bundle into dist/ (tauri::generate_context! panics at
+--        compile time when frontendDist does not exist), and cargo clippy
+--        -D warnings for the shell. The decoder tests run against fixtures
+--        shaped like the server's transformers. Nothing is delivered with
+--        a warning.
 --
 --   D16. A THROWAWAY INSTANCE ON BLADE. One NixOS module, lab.pixelfed,
 --        turns on services.pixelfed with open registration, no email
@@ -1771,10 +1773,11 @@ surface DevShell {
 
     exposes:
         flake.nix devShells.default: purs, spago, purs-tidy, purs-backend-es,
-            purescript-language-server, esbuild, rust stable with rust-src and
-            rust-analyzer, cargo-tauri, pkg-config, gobject-introspection,
-            WebKitGTK 4.1 and GTK 3 and their libraries, glib-networking,
-            xdg-utils
+            purescript-language-server, esbuild, nodejs (the runtime for
+            spago test and spago run; no npm packages), rust stable with
+            rust-src and rust-analyzer, cargo-tauri, pkg-config,
+            gobject-introspection, WebKitGTK 4.1 and GTK 3 and their
+            libraries, glib-networking, xdg-utils
         flake.nix devShells.android: the same plus the Android SDK 34, NDK
             26.1.10909125, JDK 17 and the four Android Rust targets (untested)
         scripts/check.fish
@@ -1784,11 +1787,11 @@ surface DevShell {
         spago build, spago test, spago bundle
         cargo tauri icon <png>   -- once; codegen needs icons/32x32.png
         cargo tauri dev          -- runs beforeDevCommand, then the app
-        fish scripts/check.fish  -- the gate (D15)
+        fish scripts/check.fish  -- the gate (D15); bundles into dist/ before the shell step
 
     @guarantee NoNodeModules
-        -- The repository has no package.json; esbuild comes from nixpkgs
-        -- and is driven by spago bundle.
+        -- The repository has no package.json; esbuild and node come from
+        -- nixpkgs, esbuild driven by spago bundle and node by spago test.
 
     @guidance
         -- The shell exports XDG_DATA_DIRS with the GTK and gsettings

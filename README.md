@@ -48,7 +48,7 @@ App.Backend (the seam)
 
 `src` is the PureScript application. `App.Backend` is a record of functions, one per shell command plus two subscriptions, and `App.Backend.Tauri` implements it over `window.__TAURI__`. Screens import the seam, never the Tauri module. Entities and decoders are written against Pixelfed's own transformers rather than the Mastodon specification, because Pixelfed omits some fields, nulls others and adds its own.
 
-There is no npm, no package.json and no node_modules. The frontend is spago packages plus two hand-written foreign modules: `src/App/Backend/Tauri.js`, which exists because Tauri's `withGlobalTauri` setting exposes `invoke` and `listen` on the window object, and `src/Util/File.js`, which calls `file.arrayBuffer()` on a picked file. esbuild comes from nixpkgs and is driven by `spago bundle`.
+There is no npm, no package.json and no node_modules. The frontend is spago packages plus two hand-written foreign modules: `src/App/Backend/Tauri.js`, which exists because Tauri's `withGlobalTauri` setting exposes `invoke` and `listen` on the window object, and `src/Util/File.js`, which calls `file.arrayBuffer()` on a picked file. esbuild comes from nixpkgs and is driven by `spago bundle`. Node comes from nixpkgs as well, only as the runtime `spago test` executes the compiled tests with.
 
 ## Security properties
 
@@ -93,7 +93,7 @@ The dev shell exports `XDG_DATA_DIRS` with the GTK schemas, `GIO_MODULE_DIR` poi
 fish scripts/check.fish
 ```
 
-The gate runs, in order: `purs-tidy check`, `spago build --strict` (warnings are errors), `spago test`, `cargo fmt --check`, `cargo clippy -D warnings` and `cargo test` for `pixelfed-core`, and `cargo clippy -D warnings` for the shell. It stops at the first failure. Nothing is merged or delivered with a warning.
+The gate runs, in order: `purs-tidy check`, `spago build --strict` (warnings are errors), `spago test`, `cargo fmt --check`, `cargo clippy -D warnings` and `cargo test` for `pixelfed-core`, the frontend bundle into `dist/` (Tauri's `generate_context!` macro panics at compile time when `frontendDist` does not exist), and `cargo clippy -D warnings` for the shell. It stops at the first failure. Nothing is merged or delivered with a warning.
 
 Everything up to the last step runs on a fresh clone. The last step needs the icons from `cargo tauri icon`.
 

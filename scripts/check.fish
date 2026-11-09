@@ -27,6 +27,11 @@ cargo clippy -p pixelfed-core --all-targets -- -D warnings; or exit 1
 step "cargo test pixelfed-core"
 cargo test -p pixelfed-core; or exit 1
 
+step "frontend bundle into dist/ (generate_context! requires frontendDist to exist)"
+mkdir -p dist; or exit 1
+cp static/index.html static/style.css dist/; or exit 1
+spago bundle; or exit 1
+
 step "cargo clippy pellucid (needs src-tauri/icons from cargo tauri icon)"
 cargo clippy -p pellucid -- -D warnings; or exit 1
 

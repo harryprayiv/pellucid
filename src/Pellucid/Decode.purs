@@ -13,7 +13,7 @@ import Prelude
 import Data.Argonaut.Core (Json, isNull, toNumber, toString)
 import Data.Argonaut.Decode (JsonDecodeError, decodeJson, (.:), (.:?))
 import Data.Argonaut.Decode.Decoders (decodeArray)
-import Data.Either (Either(..))
+import Data.Either (Either)
 import Data.Int as Int
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.String (toLower)

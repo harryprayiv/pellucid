@@ -35,6 +35,9 @@
         pkgs.purs-backend-es
         pkgs.purescript-language-server
         pkgs.esbuild
+        # `spago test` and `spago run` execute the compiled output with node.
+        # No npm packages are used; see the README.
+        pkgs.nodejs
       ];
 
       rustToolchain = pkgs: pkgs.rust-bin.stable.latest.default.override {
