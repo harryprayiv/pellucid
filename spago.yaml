@@ -1,0 +1,46 @@
+package:
+  name: pellucid-ps
+  dependencies:
+    - aff
+    - aff-promise
+    - argonaut-codecs
+    - argonaut-core
+    - arrays
+    - datetime
+    - effect
+    - either
+    - foldable-traversable
+    - foreign-object
+    - formatters
+    - halogen
+    - halogen-subscriptions
+    - integers
+    - lists
+    - maybe
+    - newtype
+    - now
+    - ordered-collections
+    - prelude
+    - routing
+    - routing-duplex
+    - strings
+    - transformers
+    - tuples
+    - web-events
+    - web-html
+  test:
+    main: Test.Main
+    dependencies:
+      - bifunctors
+      - console
+      - exceptions
+  bundle:
+    module: Main
+    outfile: dist/index.js
+    platform: browser
+    type: app
+    minify: false
+workspace:
+  packageSet:
+    registry: 81.11.4
+  extraPackages: {}

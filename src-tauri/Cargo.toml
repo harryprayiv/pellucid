@@ -1,0 +1,20 @@
+[package]
+name = "pellucid-ps-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tauri shell for pellucid-ps: wires the PureScript UI to pellucid-core."
+
+[lib]
+name = "pellucid_ps_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+pellucid-core = { path = "../crates/pellucid-core" }
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"

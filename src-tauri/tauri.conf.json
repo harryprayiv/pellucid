@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "pellucid-ps",
+  "version": "0.1.0",
+  "identifier": "com.harryprayiv.pellucidps",
+  "build": {
+    "frontendDist": "../dist",
+    "beforeDevCommand": {
+      "script": "mkdir -p dist && cp static/index.html static/style.css dist/ && spago bundle",
+      "wait": true
+    },
+    "beforeBuildCommand": "mkdir -p dist && cp static/index.html static/style.css dist/ && spago bundle"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "pellucid-ps",
+        "label": "main",
+        "width": 480,
+        "height": 900,
+        "minWidth": 360,
+        "minHeight": 600
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data: blob:; media-src https: blob:; connect-src ipc: http://ipc.localhost; font-src 'self'; object-src 'none'; base-uri 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "deb"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
