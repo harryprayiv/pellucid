@@ -5,6 +5,7 @@ package:
     - aff-promise
     - argonaut-codecs
     - argonaut-core
+    - arraybuffer-types
     - arrays
     - datetime
     - effect
@@ -17,6 +18,7 @@ package:
     - integers
     - lists
     - maybe
+    - media-types
     - newtype
     - now
     - ordered-collections
@@ -28,6 +30,7 @@ package:
     - transformers
     - tuples
     - web-events
+    - web-file
     - web-html
   test:
     main: Test.Main

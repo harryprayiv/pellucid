@@ -9,6 +9,10 @@ module Pixelfed.Decode
   , decodeRelationship
   , decodeRelationships
   , decodeContext
+  , decodeNotification
+  , decodeNotifications
+  , decodeComposeSettings
+  , decodeVisibility
   ) where
 
 import Prelude
@@ -16,13 +20,14 @@ import Prelude
 import Data.Argonaut.Core (Json, isNull, toNumber, toString)
 import Data.Argonaut.Decode (JsonDecodeError, decodeJson, (.:), (.:?))
 import Data.Argonaut.Decode.Decoders (decodeArray)
-import Data.Either (Either)
+import Data.Either (Either, either, hush)
 import Data.Int as Int
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.String (toLower)
+import Data.String as String
 import Data.Traversable (traverse)
 import Foreign.Object (Object)
-import Pixelfed.Entity (Account, AccountId(..), Context, LikedBy, MediaAttachment, MediaId(..), MediaType(..), Mention, PfType(..), Place, Relationship, Status(..), StatusId(..), Tag, Visibility(..))
+import Pixelfed.Entity (Account, AccountId(..), ComposeSettings, Context, LikedBy, MediaAttachment, MediaId(..), MediaType(..), Mention, Notification, NotificationId(..), NotificationKind(..), PfType(..), Place, Relationship, Status(..), StatusId(..), Tag, Visibility(..))
 
 decodeStatuses :: Json -> Either JsonDecodeError (Array Status)
 decodeStatuses = decodeArray decodeStatus
@@ -140,8 +145,10 @@ decodeMedia json = do
   obj <- decodeJson json
   id <- MediaId <$> obj .: "id"
   mediaType <- decodeMediaType <$> (fromMaybe "unknown" <$> obj .:? "type")
-  url <- obj .: "url"
+  -- `POST /api/v2/media` answers with `url: null` and the file in `preview_url`.
+  urlField <- obj .:? "url"
   previewUrl <- obj .:? "preview_url"
+  let url = fromMaybe (fromMaybe "" previewUrl) urlField
   optimizedUrl <- obj .:? "optimized_url"
   description <- obj .:? "description"
   blurhash <- obj .:? "blurhash"
@@ -225,6 +232,77 @@ decodeContext json = do
   ancestors <- obj .:? "ancestors" >>= traverse decodeStatuses >>> map (fromMaybe [])
   descendants <- obj .:? "descendants" >>= traverse decodeStatuses >>> map (fromMaybe [])
   pure { ancestors, descendants }
+
+decodeNotifications :: Json -> Either JsonDecodeError (Array Notification)
+decodeNotifications = decodeArray decodeNotification
+
+decodeNotification :: Json -> Either JsonDecodeError Notification
+decodeNotification json = do
+  obj <- decodeJson json
+  id <- NotificationId <$> obj .: "id"
+  kind <- decodeKind <$> (fromMaybe "" <$> obj .:? "type")
+  createdAt <- fromMaybe "" <$> obj .:? "created_at"
+  let
+    -- An actor or a post the server could not load, or one with a shape
+    -- these decoders do not know, becomes Nothing rather than an error.
+    account = lenient (obj .:? "account" >>= traverse decodeAccount)
+    status = lenient (obj .:? "status" >>= traverse decodeStatus)
+    tagged = lenient (obj .:? "tagged" >>= traverse decodeTagged)
+  pure { id, kind, createdAt, account, status, tagged }
+  where
+  lenient :: forall a. Either JsonDecodeError (Maybe a) -> Maybe a
+  lenient = either (const Nothing) identity
+
+decodeTagged :: Json -> Either JsonDecodeError { username :: String, statusId :: StatusId }
+decodeTagged json = do
+  obj <- decodeJson json
+  username <- obj .: "username"
+  statusId <- StatusId <$> obj .: "status_id"
+  pure { username, statusId }
+
+decodeKind :: String -> NotificationKind
+decodeKind raw = case toLower raw of
+  "follow" -> NFollow
+  "mention" -> NMention
+  "share" -> NShare
+  "reblog" -> NShare
+  "favourite" -> NFavourite
+  "like" -> NFavourite
+  "comment" -> NComment
+  "tagged" -> NTagged
+  "modlog" -> NModlog
+  "direct" -> NDirect
+  "story:react" -> NStoryReact
+  "story:comment" -> NStoryComment
+  other -> NOther other
+
+-- | `allowed_media_types` arrives as an array, or as one comma-separated
+-- | string when the instance configured a single type.
+decodeComposeSettings :: Json -> Either JsonDecodeError ComposeSettings
+decodeComposeSettings json = do
+  obj <- decodeJson json
+  typesJson <- obj .:? "allowed_media_types"
+  let
+    allowedMediaTypes = case typesJson of
+      Nothing -> []
+      Just j -> case hush (decodeJson j) of
+        Just (arr :: Array String) -> arr
+        Nothing -> case hush (decodeJson j) of
+          Just (one :: String) -> map String.trim (String.split (String.Pattern ",") one)
+          Nothing -> []
+  maxCaptionLength <- lenientInt 500 <$> obj .:? "max_caption_length"
+  maxFileSizeKb <- lenientInt 15000 <$> obj .:? "max_file_size"
+  maxMediaAttachments <- lenientInt 4 <$> obj .:? "max_media_attachments"
+  maxAltTextLength <- lenientInt 1000 <$> obj .:? "max_altext_length"
+  defaultScope <- obj .:? "default_scope"
+  pure
+    { allowedMediaTypes
+    , maxCaptionLength
+    , maxFileSizeKb
+    , maxMediaAttachments
+    , maxAltTextLength
+    , defaultVisibility: map decodeVisibility defaultScope
+    }
 
 decodeVisibility :: String -> Visibility
 decodeVisibility raw = case toLower raw of

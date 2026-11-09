@@ -1,0 +1,428 @@
+[
+  {
+    "id": "9001",
+    "type": "favourite",
+    "created_at": "2025-11-09T10:15:00.000Z",
+    "account": {
+      "id": "11",
+      "username": "dave",
+      "acct": "dave@remote.example",
+      "display_name": "Dave",
+      "url": "https://remote.example/@dave",
+      "avatar": "https://remote.example/dave.png"
+    },
+    "status": {
+      "_v": 1,
+      "id": "812345678901234567",
+      "shortcode": "aBcDeF",
+      "uri": "https://pixelfed.social/p/alice/812345678901234567",
+      "url": "https://pixelfed.social/p/alice/812345678901234567",
+      "in_reply_to_id": null,
+      "in_reply_to_account_id": null,
+      "reblog": null,
+      "content": "Golden hour <a href=\"https://pixelfed.social/discover/tags/sunset?src=hash\">#sunset</a> &amp; coffee",
+      "content_text": "Golden hour #sunset & coffee",
+      "created_at": "2026-11-08T21:34:12.000Z",
+      "emojis": [],
+      "reblogs_count": 0,
+      "favourites_count": 12,
+      "reblogged": false,
+      "favourited": true,
+      "muted": null,
+      "sensitive": false,
+      "spoiler_text": "",
+      "visibility": "public",
+      "application": {
+        "name": "web",
+        "website": null
+      },
+      "language": null,
+      "mentions": [],
+      "pf_type": "photo:album",
+      "reply_count": 3,
+      "comments_disabled": false,
+      "thread": false,
+      "replies": [],
+      "parent": [],
+      "place": {
+        "id": 4,
+        "name": "Boston",
+        "slug": "boston",
+        "country": "United States",
+        "lat": 42.36,
+        "long": -71.06
+      },
+      "local": true,
+      "taggedPeople": [],
+      "liked_by": {
+        "id": "1",
+        "username": "bob",
+        "url": "/i/web/profile/1",
+        "others": true,
+        "total_count": 11,
+        "total_count_pretty": "11"
+      },
+      "media_attachments": [
+        {
+          "id": "1",
+          "type": "image",
+          "url": "https://pixelfed.social/storage/m/a.jpg",
+          "remote_url": null,
+          "preview_url": "https://pixelfed.social/storage/m/a_thumb.jpg",
+          "optimized_url": "https://pixelfed.social/storage/m/a_opt.jpg",
+          "text_url": null,
+          "meta": {
+            "focus": {
+              "x": 0,
+              "y": 0
+            },
+            "original": {
+              "width": 4032,
+              "height": 3024,
+              "size": "4032x3024",
+              "aspect": 1.3333
+            }
+          },
+          "description": "A sunset over the harbour",
+          "license": null,
+          "is_nsfw": false,
+          "orientation": "landscape",
+          "filter_name": null,
+          "filter_class": null,
+          "mime": "image/jpeg",
+          "blurhash": "U4Rfzst8?bt7ogayj[j[~pfQ9Goe%Mj[WBay",
+          "content_credentials": null
+        },
+        {
+          "id": "2",
+          "type": "video",
+          "url": "https://pixelfed.social/storage/m/b.mp4",
+          "remote_url": null,
+          "preview_url": "https://pixelfed.social/storage/m/b_thumb.jpg",
+          "optimized_url": null,
+          "text_url": null,
+          "meta": null,
+          "description": null,
+          "license": null,
+          "is_nsfw": false,
+          "orientation": null,
+          "filter_name": null,
+          "filter_class": null,
+          "mime": "video/mp4",
+          "blurhash": "U4Rfzst8?bt7ogayj[j[~pfQ9Goe%Mj[WBay",
+          "content_credentials": null
+        }
+      ],
+      "account": {
+        "id": "7",
+        "username": "alice",
+        "acct": "alice",
+        "display_name": "Alice",
+        "discoverable": true,
+        "locked": false,
+        "followers_count": 120,
+        "following_count": 80,
+        "statuses_count": 345,
+        "note": "<p>Photos.</p>",
+        "note_text": "Photos.",
+        "url": "https://pixelfed.social/alice",
+        "avatar": "https://pixelfed.social/storage/avatars/7.jpg",
+        "website": null,
+        "local": true,
+        "is_admin": false,
+        "created_at": "2024-02-01T03:45:27.612584Z",
+        "header_bg": null,
+        "last_fetched_at": null,
+        "pronouns": [
+          "she/her"
+        ],
+        "location": null,
+        "has_story": false
+      },
+      "tags": [
+        {
+          "name": "sunset",
+          "url": "https://pixelfed.social/discover/tags/sunset"
+        }
+      ],
+      "poll": null,
+      "bookmarked": false,
+      "edited_at": null,
+      "pinned": false
+    }
+  },
+  {
+    "id": "9002",
+    "type": "comment",
+    "created_at": "2025-11-09T09:50:00.000Z",
+    "account": {
+      "id": "1",
+      "username": "bob",
+      "acct": "bob",
+      "display_name": "Bob",
+      "url": "https://pixelfed.social/bob",
+      "avatar": "https://pixelfed.social/storage/avatars/1.jpg"
+    },
+    "status": {
+      "id": "900000000000000001",
+      "uri": "https://pixelfed.social/p/bob/900000000000000001",
+      "url": "https://pixelfed.social/p/bob/900000000000000001",
+      "in_reply_to_id": "812345678901234567",
+      "in_reply_to_account_id": "7",
+      "content": "<p>Lovely light</p>",
+      "content_text": "Lovely light",
+      "created_at": "2026-11-08T22:00:00.000Z",
+      "reblogs_count": 0,
+      "favourites_count": 1,
+      "favourited": false,
+      "sensitive": false,
+      "spoiler_text": "",
+      "visibility": "public",
+      "pf_type": "text",
+      "reply_count": 0,
+      "comments_disabled": false,
+      "media_attachments": [],
+      "account": {
+        "id": "1",
+        "username": "bob",
+        "acct": "bob",
+        "display_name": "Bob",
+        "url": "https://pixelfed.social/bob",
+        "avatar": "https://pixelfed.social/storage/avatars/1.jpg"
+      },
+      "tags": [],
+      "mentions": [
+        {
+          "id": "7",
+          "username": "alice",
+          "acct": "alice",
+          "url": "https://pixelfed.social/alice"
+        }
+      ]
+    }
+  },
+  {
+    "id": "9003",
+    "type": "follow",
+    "created_at": "2025-11-08T22:01:33.000Z",
+    "account": {
+      "id": "9",
+      "username": "carol",
+      "acct": "carol@remote.example",
+      "display_name": "",
+      "locked": true,
+      "followers_count": 0,
+      "following_count": 0,
+      "statuses_count": 1,
+      "note": "",
+      "note_text": null,
+      "url": "https://remote.example/@carol",
+      "avatar": "https://remote.example/avatar.png",
+      "local": false,
+      "is_admin": false,
+      "created_at": "2025-06-01T00:00:00.000000Z"
+    },
+    "relationship": {
+      "id": "9",
+      "following": false,
+      "followed_by": true,
+      "blocking": false,
+      "muting": false,
+      "muting_notifications": false,
+      "requested": false,
+      "domain_blocking": false,
+      "showing_reblogs": false,
+      "endorsed": false
+    }
+  },
+  {
+    "id": "9004",
+    "type": "share",
+    "created_at": "2025-11-08T20:00:00.000Z",
+    "account": {
+      "id": "9",
+      "username": "carol",
+      "acct": "carol@remote.example",
+      "display_name": "",
+      "locked": true,
+      "followers_count": 0,
+      "following_count": 0,
+      "statuses_count": 1,
+      "note": "",
+      "note_text": null,
+      "url": "https://remote.example/@carol",
+      "avatar": "https://remote.example/avatar.png",
+      "local": false,
+      "is_admin": false,
+      "created_at": "2025-06-01T00:00:00.000000Z"
+    },
+    "status": {
+      "_v": 1,
+      "id": "812345678901234567",
+      "shortcode": "aBcDeF",
+      "uri": "https://pixelfed.social/p/alice/812345678901234567",
+      "url": "https://pixelfed.social/p/alice/812345678901234567",
+      "in_reply_to_id": null,
+      "in_reply_to_account_id": null,
+      "reblog": null,
+      "content": "Golden hour <a href=\"https://pixelfed.social/discover/tags/sunset?src=hash\">#sunset</a> &amp; coffee",
+      "content_text": "Golden hour #sunset & coffee",
+      "created_at": "2026-11-08T21:34:12.000Z",
+      "emojis": [],
+      "reblogs_count": 0,
+      "favourites_count": 12,
+      "reblogged": false,
+      "favourited": true,
+      "muted": null,
+      "sensitive": false,
+      "spoiler_text": "",
+      "visibility": "public",
+      "application": {
+        "name": "web",
+        "website": null
+      },
+      "language": null,
+      "mentions": [],
+      "pf_type": "photo:album",
+      "reply_count": 3,
+      "comments_disabled": false,
+      "thread": false,
+      "replies": [],
+      "parent": [],
+      "place": {
+        "id": 4,
+        "name": "Boston",
+        "slug": "boston",
+        "country": "United States",
+        "lat": 42.36,
+        "long": -71.06
+      },
+      "local": true,
+      "taggedPeople": [],
+      "liked_by": {
+        "id": "1",
+        "username": "bob",
+        "url": "/i/web/profile/1",
+        "others": true,
+        "total_count": 11,
+        "total_count_pretty": "11"
+      },
+      "media_attachments": [
+        {
+          "id": "1",
+          "type": "image",
+          "url": "https://pixelfed.social/storage/m/a.jpg",
+          "remote_url": null,
+          "preview_url": "https://pixelfed.social/storage/m/a_thumb.jpg",
+          "optimized_url": "https://pixelfed.social/storage/m/a_opt.jpg",
+          "text_url": null,
+          "meta": {
+            "focus": {
+              "x": 0,
+              "y": 0
+            },
+            "original": {
+              "width": 4032,
+              "height": 3024,
+              "size": "4032x3024",
+              "aspect": 1.3333
+            }
+          },
+          "description": "A sunset over the harbour",
+          "license": null,
+          "is_nsfw": false,
+          "orientation": "landscape",
+          "filter_name": null,
+          "filter_class": null,
+          "mime": "image/jpeg",
+          "blurhash": "U4Rfzst8?bt7ogayj[j[~pfQ9Goe%Mj[WBay",
+          "content_credentials": null
+        },
+        {
+          "id": "2",
+          "type": "video",
+          "url": "https://pixelfed.social/storage/m/b.mp4",
+          "remote_url": null,
+          "preview_url": "https://pixelfed.social/storage/m/b_thumb.jpg",
+          "optimized_url": null,
+          "text_url": null,
+          "meta": null,
+          "description": null,
+          "license": null,
+          "is_nsfw": false,
+          "orientation": null,
+          "filter_name": null,
+          "filter_class": null,
+          "mime": "video/mp4",
+          "blurhash": "U4Rfzst8?bt7ogayj[j[~pfQ9Goe%Mj[WBay",
+          "content_credentials": null
+        }
+      ],
+      "account": {
+        "id": "7",
+        "username": "alice",
+        "acct": "alice",
+        "display_name": "Alice",
+        "discoverable": true,
+        "locked": false,
+        "followers_count": 120,
+        "following_count": 80,
+        "statuses_count": 345,
+        "note": "<p>Photos.</p>",
+        "note_text": "Photos.",
+        "url": "https://pixelfed.social/alice",
+        "avatar": "https://pixelfed.social/storage/avatars/7.jpg",
+        "website": null,
+        "local": true,
+        "is_admin": false,
+        "created_at": "2024-02-01T03:45:27.612584Z",
+        "header_bg": null,
+        "last_fetched_at": null,
+        "pronouns": [
+          "she/her"
+        ],
+        "location": null,
+        "has_story": false
+      },
+      "tags": [
+        {
+          "name": "sunset",
+          "url": "https://pixelfed.social/discover/tags/sunset"
+        }
+      ],
+      "poll": null,
+      "bookmarked": false,
+      "edited_at": null,
+      "pinned": false
+    }
+  },
+  {
+    "id": "9005",
+    "type": "tagged",
+    "created_at": "2025-11-08T18:30:00.000Z",
+    "account": {
+      "id": "11",
+      "username": "dave",
+      "acct": "dave@remote.example",
+      "display_name": "Dave",
+      "url": "https://remote.example/@dave",
+      "avatar": "https://remote.example/dave.png"
+    },
+    "tagged": {
+      "username": "alice",
+      "post_url": "https://pixelfed.social/p/dave/700000000000000001",
+      "status_id": "700000000000000001",
+      "profile_id": "11"
+    }
+  },
+  {
+    "id": "9006",
+    "type": "poll:ended",
+    "created_at": "2025-11-08T12:00:00.000Z",
+    "account": null,
+    "status": {
+      "id": "1",
+      "garbage": true
+    }
+  }
+]

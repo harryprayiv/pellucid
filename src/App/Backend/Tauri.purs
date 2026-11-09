@@ -8,15 +8,21 @@ import App.Backend (AppError(..), Backend, cursorToString, decodeApiResponse, de
 import Control.Promise (Promise, toAffE)
 import Data.Argonaut.Core (Json, fromObject, fromString, jsonEmptyObject)
 import Data.Argonaut.Decode (JsonDecodeError, decodeJson, printJsonDecodeError, (.:))
+import Data.ArrayBuffer.Types (ArrayBuffer)
 import Data.Either (Either(..))
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Effect.Aff (Aff, attempt)
 import Effect.Exception (message)
+import Foreign.Object (Object)
 import Foreign.Object as Object
 
 foreign import invokeImpl :: String -> Json -> Effect (Promise Json)
+
+-- | Same envelope as `invokeImpl`, but the body is raw bytes and the
+-- | metadata travels as percent-encoded IPC headers.
+foreign import invokeRawImpl :: String -> ArrayBuffer -> Object String -> Effect (Promise Json)
 
 foreign import listenImpl :: String -> (Json -> Effect Unit) -> Effect (Effect Unit)
 
@@ -28,6 +34,15 @@ backend =
   , logout: invoke "logout" jsonEmptyObject decodeUnit
   , apiRequest: \req -> invoke "api_request" (args [ Tuple "request" (encodeApiRequest req) ]) decodeApiResponse
   , apiFollow: \cursor -> invoke "api_follow" (args [ Tuple "url" (fromString (cursorToString cursor)) ]) decodeApiResponse
+  , mediaUpload: \upload ->
+      invokeRaw "media_upload" upload.bytes
+        ( Object.fromFoldable
+            [ Tuple "x-filename" upload.filename
+            , Tuple "x-mime" upload.mime
+            , Tuple "x-description" (fromMaybe "" upload.description)
+            ]
+        )
+        decodeApiResponse
   , onSessionChanged: \handler -> listenImpl "session-changed" \payload ->
       case decodeSessionSummary payload of
         Right summary -> handler summary
@@ -44,8 +59,14 @@ args = fromObject <<< Object.fromFoldable
 -- | rejection, command error, undecodable payload, thrown exception) becomes
 -- | an `AppError`.
 invoke :: forall a. String -> Json -> (Json -> Either JsonDecodeError a) -> Aff (Either AppError a)
-invoke command payload decode = do
-  outcome <- attempt (toAffE (invokeImpl command payload))
+invoke command payload decode = settle command decode (toAffE (invokeImpl command payload))
+
+invokeRaw :: forall a. String -> ArrayBuffer -> Object String -> (Json -> Either JsonDecodeError a) -> Aff (Either AppError a)
+invokeRaw command bytes headers decode = settle command decode (toAffE (invokeRawImpl command bytes headers))
+
+settle :: forall a. String -> (Json -> Either JsonDecodeError a) -> Aff Json -> Aff (Either AppError a)
+settle command decode call = do
+  outcome <- attempt call
   pure case outcome of
     Left err -> Left (Protocol (message err))
     Right json -> case decodeOutcome json of

@@ -3,10 +3,12 @@
 
 use std::sync::Arc;
 
+use percent_encoding::percent_decode_str;
 use pixelfed_core::{
-    ApiRequest, ApiResponse, AppError, Core, Domain, FileStore, InstanceProbe, SessionSummary,
+    ApiRequest, ApiResponse, AppError, Core, Domain, FileStore, InstanceProbe, MediaUpload, SessionSummary,
 };
 use serde::Serialize;
+use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -85,6 +87,33 @@ async fn api_follow(state: State<'_, AppState>, url: String) -> Result<ApiRespon
     state.core.api_follow(&url).await
 }
 
+/// The file bytes travel as the raw IPC body, so nothing is base64 encoded
+/// and nothing is written to disk. Metadata rides in percent-encoded headers.
+#[tauri::command]
+async fn media_upload(state: State<'_, AppState>, request: Request<'_>) -> Result<ApiResponse, AppError> {
+    let bytes = match request.body() {
+        InvokeBody::Raw(bytes) => bytes.clone(),
+        InvokeBody::Json(_) => {
+            return Err(AppError::protocol("media_upload expects a raw body, not JSON"));
+        }
+    };
+    let header = |name: &str| -> Option<String> {
+        request
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| percent_decode_str(v).decode_utf8_lossy().into_owned())
+            .filter(|v| !v.is_empty())
+    };
+    let upload = MediaUpload {
+        bytes,
+        filename: header("x-filename").unwrap_or_else(|| "upload".into()),
+        mime: header("x-mime").unwrap_or_else(|| "application/octet-stream".into()),
+        description: header("x-description"),
+    };
+    state.core.media_upload(upload).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -101,7 +130,8 @@ pub fn run() {
             login_start,
             logout,
             api_request,
-            api_follow
+            api_follow,
+            media_upload
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pellucid");

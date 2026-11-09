@@ -12,6 +12,7 @@ module App.Backend
   , Method(..)
   , ApiRequest
   , ApiResponse
+  , MediaUpload
   , Cursor
   , cursorToString
   , Backend
@@ -27,8 +28,9 @@ module App.Backend
 import Prelude
 
 import Data.Argonaut.Core (Json, fromArray, fromObject, fromString, isNull, jsonNull)
-import Data.Argonaut.Decode (JsonDecodeError(..), decodeJson, (.:), (.:?))
+import Data.Argonaut.Decode (JsonDecodeError, decodeJson, (.:), (.:?))
 import Data.Argonaut.Decode as Decode
+import Data.ArrayBuffer.Types (ArrayBuffer)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Tuple (Tuple(..))
@@ -36,7 +38,7 @@ import Effect (Effect)
 import Effect.Aff (Aff)
 import Foreign.Object as Object
 
--- | Mirrors `pellucid_core::AppError` plus `Decode`, which only the UI raises
+-- | Mirrors `pixelfed_core::AppError` plus `Decode`, which only the UI raises
 -- | when a JSON body does not have the shape the decoders expect.
 data AppError
   = NoSession
@@ -109,6 +111,15 @@ type ApiResponse =
   , prev :: Maybe Cursor
   }
 
+-- | One file for `POST /api/v2/media`. The bytes cross the bridge as a raw
+-- | IPC body; the shell never writes them to disk.
+type MediaUpload =
+  { bytes :: ArrayBuffer
+  , filename :: String
+  , mime :: String
+  , description :: Maybe String
+  }
+
 type Backend =
   { sessionGet :: Aff (Either AppError (Maybe SessionSummary))
   , instanceProbe :: String -> Aff (Either AppError InstanceProbe)
@@ -116,6 +127,7 @@ type Backend =
   , logout :: Aff (Either AppError Unit)
   , apiRequest :: ApiRequest -> Aff (Either AppError ApiResponse)
   , apiFollow :: Cursor -> Aff (Either AppError ApiResponse)
+  , mediaUpload :: MediaUpload -> Aff (Either AppError ApiResponse)
   -- | Subscribe to session changes. Returns the unsubscribe effect.
   , onSessionChanged :: (Maybe SessionSummary -> Effect Unit) -> Effect (Effect Unit)
   -- | Subscribe to login failures reported after `loginStart` returned.
@@ -192,7 +204,7 @@ decodeApiResponse json = do
 decodeUnit :: Json -> Either JsonDecodeError Unit
 decodeUnit _ = pure unit
 
--- | Shape expected by `pellucid_core::ApiRequest` (serde): `query` is an array
+-- | Shape expected by `pixelfed_core::ApiRequest` (serde): `query` is an array
 -- | of two-element arrays, `body` is null when absent.
 encodeApiRequest :: ApiRequest -> Json
 encodeApiRequest req = fromObject $ Object.fromFoldable

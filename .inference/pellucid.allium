@@ -1,0 +1,1859 @@
+-- allium: 3
+--
+-- pellucid: a Pixelfed client whose user interface is PureScript (Halogen)
+-- in a Tauri 2 webview and whose network and secret handling is Rust. It
+-- speaks the API that pixelfed-rn speaks to stock Pixelfed servers today,
+-- so it can be used against pixelfed.social and any other instance before
+-- a Pellucid server exists. This file is the contract the code is held
+-- to: where the code and this file disagree, this file records the
+-- intended behaviour and section IMPLEMENTATION STATUS says which rules
+-- are built.
+--
+-- RELATION TO OTHER SPECS. None yet. A server spec (ActivityPub, storage,
+-- moderation) is a separate future file; nothing in this file assumes it.
+-- The fleet side of the test instance is one NixOS module
+-- (pixelfed-lab.nix) and is described under surface LabInstance.
+--
+-- REVISIONS. Written 2026-11-09 against the second batch of the port: the
+-- rename to Pellucid, the login and feed slice from the first batch, and
+-- the post detail and profile screens added in the second. Revised the
+-- same day for the third batch: notifications, compose with media upload,
+-- deletion of the viewer's own post, and PKCE on login.
+--
+-- FACTS THIS SPEC IS WRITTEN AGAINST, checked 2026-11-09 in the source of
+-- pixelfed/pixelfed (dev) and pixelfed/pixelfed-rn (main):
+--   - config/cors.php sets allowed_origins to [] unless the operator sets
+--     PF_CORS_ALLOWED_ORIGINS. Only /api/v1/apps and /api/v2/instance set
+--     Access-Control-Allow-Origin: * by hand. Timelines, /oauth/token and
+--     verify_credentials send no CORS header. A page in a browser cannot
+--     log in to a stock instance; a native HTTP client can.
+--   - The query flag _pe=1 (PF_API_ENTITY_KEY) selects StatusService::get,
+--     the Pixelfed entity with pf_type, content_text, liked_by,
+--     comments_disabled, place and taggedPeople. Without it
+--     StatusService::getMastodon strips those keys and adds replies_count.
+--   - POST /api/v1/statuses/{id}/bookmark and /unbookmark ignore _pe and
+--     return the Mastodon entity. favourite and unfavourite honour it.
+--   - Login is OAuth 2 authorization code through Laravel Passport 13.10
+--     on league/oauth2-server 9.4.1 (composer.lock): GET
+--     /api/nodeinfo/2.0.json (software.name must be pixelfed, version at
+--     least 0.12.3), POST /api/v1/apps form-encoded with client_name,
+--     redirect_uris (newline separated, any URI accepted, urldecoded once
+--     more on the server), scopes, website; GET /oauth/authorize with
+--     client_id, redirect_uri, response_type=code, scope; POST /oauth/token
+--     form-encoded with grant_type=authorization_code, code, client_id,
+--     client_secret, redirect_uri, scope; GET
+--     /api/v1/accounts/verify_credentials?_pe=1. Both OAuth routes are
+--     throttled to 10 requests a minute.
+--   - PKCE is accepted: league 9 stores code_challenge and
+--     code_challenge_method (plain or S256) from /oauth/authorize in the
+--     authorization code and refuses /oauth/token without a matching
+--     code_verifier whenever a challenge was stored. /api/v1/apps creates
+--     confidential clients (a 40-character secret, personal_access_client
+--     and password_client false), and Passport demands the secret of a
+--     confidential client at /oauth/token, so PKCE adds protection against
+--     code interception without removing the secret.
+--   - Pixelfed registers Passport's routes by hand in routes/web.php: POST
+--     /oauth/token and GET /oauth/authorize are public; POST and DELETE
+--     /oauth/authorize (the out-of-band consent form), /oauth/tokens,
+--     DELETE /oauth/tokens/{id} and the client routes sit behind auth:web,
+--     the browser session. There is no RFC 7009 /oauth/revoke. POST
+--     /api/v1.1/accounts/apps-and-applications/{id}/revoke needs the
+--     security:write scope and answers 422 for the token making the
+--     request. A client cannot revoke its own token.
+--   - Timelines paginate by the Link header, <url>; rel="next",<url>;
+--     rel="prev", with max_id and min_id already in the URLs. The URLs are
+--     absolute and built from config('app.url').
+--   - GET /api/v1/statuses/{id}/context honours _pe, returns up to 100
+--     descendants and sends no Link header.
+--   - GET /api/v1/accounts/{id}/statuses honours _pe, max_id, min_id and
+--     limit (1..100) and sends no Link header. A locked account the viewer
+--     does not follow yields [].
+--   - GET /api/v1/accounts/relationships takes id[] (at most 20) and
+--     returns RelationshipService::get entries: id, following, followed_by,
+--     blocking, muting, muting_notifications, requested, domain_blocking,
+--     showing_reblogs, endorsed. The viewer's own id yields no entry.
+--   - POST /api/v1/accounts/{id}/follow and /unfollow return the same
+--     Relationship shape; follow on a locked account sets requested.
+--   - POST /api/v1/statuses honours _pe. Validation: status at most
+--     max_caption_length (default 500), media_ids an array of at most
+--     max_album_length (default 4), visibility in private, unlisted,
+--     public, direct, spoiler_text at most 140, comments_disabled boolean.
+--     With neither media_ids nor in_reply_to_id it answers 403 "Empty
+--     statuses are not allowed". A reply comes back as the created status.
+--     pixelfed-rn sends these as query parameters; Laravel reads a JSON
+--     body the same way.
+--   - DELETE /api/v1/statuses/{id} returns the deleted status.
+--   - POST /api/v2/media is multipart with file (or file[]) and an
+--     optional description (at most max_altext_length). The file must
+--     match pixelfed.media_types (default image/jpeg, image/jpg, image/png,
+--     image/gif; pixelfed.social adds video/mp4) and be at most
+--     pixelfed.max_photo_size kilobytes (default 15000). 429 when the
+--     account's daily upload count is spent, 403 when its storage is full.
+--     The answer is MediaTransformer with url null and preview_url the
+--     stored file plus ?v=. PUT /api/v1/media/{id} with description answers
+--     with the same transformer. GET /api/v1.1/compose/settings returns
+--     allowed_media_types (an array, or one comma-joined string),
+--     max_caption_length, max_file_size in kilobytes,
+--     max_media_attachments, max_altext_length and default_scope.
+--   - GET /api/v1/notifications honours _pe, caps limit at 40 (default
+--     20), pages by max_id, min_id and since_id with a Link header, and
+--     filters by types[] in mention, reblog, follow, favourite (no comment
+--     filter). NotificationTransformer maps verbs: dm to direct, follow,
+--     mention, reblog and share to share, like to favourite, comment,
+--     admin.user.modlog.comment to modlog, tagged, story:react,
+--     story:comment. Fields: id, type, created_at, account (the actor),
+--     relationship (when the actor is someone else), status (always the
+--     Pixelfed entity through StatusService::get, whatever _pe says),
+--     direct { conversation_id, message_id }, modlog { id, url }, tagged
+--     { username, post_url, status_id, profile_id }. Which status: the
+--     liked or shared post for like and share (SharePipeline stores
+--     reblog_of_id), the comment itself for comment, the mentioning post
+--     for mention, none for follow (the item is a Profile) and tagged (the
+--     item is a MediaTag).
+--   - Counters have shipped as numbers, as strings and as null.
+--   - liked_by is { username: null, others: false } when there is nobody
+--     to show.
+--   - Status created_at is Y-m-d\TH:i:s.vP rewritten to ...Z (three
+--     fractional digits); Account created_at is Carbon toJSON (six).
+--   - pixelfed-rn is 23,382 lines of TypeScript across 85 screens and
+--     roughly 110 endpoints over /api/v1, /api/v1.1, /api/v1.2, /api/v2,
+--     /api/admin and pixelfed.org's open server directory. It stores the
+--     token in MMKV, unencrypted.
+--   - Tauri 2.12: app.withGlobalTauri exposes window.__TAURI__.core.invoke
+--     and .event.listen with no npm package; application commands need no
+--     capability entry; the IPC needs connect-src ipc: http://ipc.localhost
+--     in the CSP; Linux codegen reads the first .png in bundle.icon at
+--     compile time and fails without it; build.beforeDevCommand runs from
+--     the directory above src-tauri when no package.json exists and waits
+--     for the script only when given { script, wait: true }. invoke(cmd,
+--     Uint8Array, { headers }) sends the bytes as the raw IPC body; a
+--     command declared with a tauri::ipc::Request argument reads them as
+--     InvokeBody::Raw and reads the headers.
+--   - nixpkgs nixos-unstable packages Pixelfed 0.12.9 with a
+--     services.pixelfed module (domain, secretFile, settings as .env
+--     key=value, nginx vhost, local MySQL and Redis, pixelfed-manage
+--     wrapper for artisan). user:create takes --name --username --email
+--     --password --is_admin --confirm_email; user:admin takes a username.
+--   - The registry package set 81.11.4 with purs 0.15.16 and spago 1.0.5
+--     (both from purescript-overlay) builds Halogen 7.0.0, routing-duplex
+--     0.7.0, argonaut-codecs 9.1.0, aff-promise 4.0.0, web-file 4.0.0 and
+--     arraybuffer-types 3.0.2.
+--
+-- Decisions taken 2026-11-09:
+--
+--   D1. SCOPE. A client for the existing Pixelfed protocol first. The
+--       server is a later project with its own spec. Everything the client
+--       needs is reached through the endpoints pixelfed-rn already uses.
+--
+--   D2. THE SPLIT. Rust (crate pixelfed-core, no UI, no Tauri dependency)
+--       owns the OAuth dance, the token, the authenticated transport and
+--       the validation of every URL the token travels to. PureScript owns
+--       the entities, the decoders, the screens and the state. The Tauri
+--       crate is an adapter between the two and holds no protocol logic.
+--
+--   D3. THE TOKEN NEVER CROSSES THE BRIDGE. The webview receives
+--       SessionSummary (domain, account id, acct) and never the access
+--       token, the client secret or the refresh token. This is what the
+--       CORS fact makes free: since Rust must make the requests anyway,
+--       the token has no reason to exist in JavaScript.
+--
+--   D4. THE TOKEN GOES ONLY TO /api/ PATHS ON THE LOGGED-IN ORIGIN. A
+--       request path must start with /api/. A pagination cursor is used
+--       only after Rust parses it, checks scheme https, the same host and
+--       port as the session's domain, and a path under /api/. The upload
+--       goes to the fixed path /api/v2/media on the same origin.
+--
+--   D5. HTTPS ONLY. Domain is a validated host; its base URL is always
+--       https. There is no insecure mode and none is planned; the test
+--       instance gets a real certificate instead (D16).
+--
+--   D6. NO HTML IS RENDERED AS HTML. Captions are content_text. When a
+--       server omits it the HTML content is reduced to text by stripping
+--       tags and decoding the common entities, and that text is set as a
+--       text node. innerHTML is not used anywhere. Hashtags and mentions
+--       will be linked from the tags and mentions arrays, not by trusting
+--       the server's markup.
+--
+--   D7. NO NPM. The frontend is spago packages plus two hand-written
+--       foreign modules: src/App/Backend/Tauri.js, which reaches
+--       window.__TAURI__ because app.withGlobalTauri is on, and
+--       src/Util/File.js, which calls file.arrayBuffer(). Everything
+--       foreign is listed in contract ForeignBudget.
+--
+--   D8. PIXELFED ENTITIES, LENIENTLY DECODED. Every read sends _pe=1.
+--       Decoders default every field Pixelfed has ever omitted or nulled,
+--       read counters from numbers and strings, and keep unknown
+--       visibilities, pf_types, media types and notification verbs as
+--       data rather than failing, so one new server value cannot blank a
+--       feed. A notification whose actor or status cannot be decoded keeps
+--       its row with that part missing.
+--
+--   D9. THE SERVER IS THE TRUTH FOR TOGGLES. A like or bookmark shows the
+--       old state until the server answers. The answer is merged by rule:
+--       the favourite endpoints return the Pixelfed entity, which replaces
+--       ours; the bookmark endpoints return the Mastodon entity, from
+--       which only the bookmarked flag is taken. A reply or a deletion
+--       adjusts the reply count locally by one, since the server does not
+--       return the parent.
+--
+--   D10. ONE LOGIN FLOW, TWO REDIRECTS. The desktop shell binds a one-shot
+--        listener on 127.0.0.1 and registers http://127.0.0.1:PORT/callback
+--        as the redirect URI; the state parameter is a random UUID checked
+--        on return; unrelated requests to the port are answered 404 and
+--        ignored. A mobile shell will register a custom scheme through
+--        tauri-plugin-deep-link and hand the same code to the same
+--        login_finish. Nothing else about login differs per platform.
+--
+--   D11. A FRESH CLIENT PER LOGIN. Each login registers a new OAuth
+--        client, as pixelfed-rn does, because the redirect URI carries an
+--        ephemeral port and because Pixelfed issues clients freely.
+--
+--   D12. SESSION STORAGE IS A SEAM. SecretStore is a trait. The desktop
+--        implementation is a JSON file with mode 0600 under the app data
+--        directory (com.harryprayiv.pellucid), written atomically. Mobile
+--        implementations (Android Keystore, iOS Keychain) plug into the
+--        same trait and are not built. The file holds the client secret as
+--        well as the token (D19), so the mobile stores must protect both.
+--
+--   D13. LOGOUT IS LOCAL. It clears the store and the in-memory session
+--        and emits session-changed with null. The server keeps the token
+--        until it expires, because stock Pixelfed offers a client no way to
+--        revoke the token it is using (KnownIssue no_token_revoke).
+--
+--   D14. PAGINATION FOLLOWS WHAT THE SERVER GIVES. Where a Link header
+--        exists (timelines, notifications) the client stores the next URL
+--        as an opaque Cursor and asks Rust to follow it (D4). Where none
+--        exists (account statuses) the client pages by max_id = the last
+--        id it holds, and an empty page ends the list. Pages are
+--        deduplicated by id.
+--
+--   D15. THE GATE. scripts/check.fish runs purs-tidy check, spago build
+--        --strict (warnings are errors), spago test, cargo fmt --check,
+--        cargo clippy -D warnings and cargo test for the core crate, and
+--        cargo clippy -D warnings for the shell. The decoder tests run
+--        against fixtures shaped like the server's transformers. Nothing
+--        is delivered with a warning.
+--
+--   D16. A THROWAWAY INSTANCE ON BLADE. One NixOS module, lab.pixelfed,
+--        turns on services.pixelfed with open registration, no email
+--        verification, mail to the log, every ActivityPub switch off and
+--        a Let's Encrypt certificate obtained by DNS-01, so the client
+--        needs no exception for it. It is deleted by removing the import
+--        and /var/lib/pixelfed.
+--
+--   D17. THE NAME. Pellucid, meaning transparently clear. The name claims
+--        nothing by itself; the code, the gate and reproducible builds are
+--        what make the claim. The identifier is com.harryprayiv.pellucid
+--        and the OAuth client name shown on consent pages is Pellucid.
+--
+--   D18. RELEASE. AGPL-3.0-or-later. Not released until the port covers
+--        what people use daily (surface list below) and the mobile shell
+--        exists; the repository is private work until then.
+--
+--   D19. PKCE ALWAYS, SECRET STILL. Every login sends an S256 code
+--        challenge from a fresh 32-byte verifier and sends the verifier
+--        with the code. The server enforces the match because it stored
+--        the challenge; nothing is configured per instance. The client
+--        secret stays in the token request and in the session because
+--        /api/v1/apps only issues confidential clients. What PKCE buys is
+--        that a code taken off the loopback or deep-link redirect is
+--        useless without the verifier, which never leaves Rust.
+--
+--   D20. MEDIA BYTES CROSS THE BRIDGE AS A RAW IPC BODY, ONCE. The UI
+--        reads a picked File into an ArrayBuffer and invokes media_upload
+--        with it as the body and the filename, MIME type and description
+--        as percent-encoded headers. No base64, no temporary file, no path
+--        handed to Rust; the shell never reads the filesystem for the
+--        user. Rust refuses an empty body or one over 512 MiB before any
+--        network, builds the multipart form and posts it with the token.
+--        The server's preview_url is the thumbnail; the UI never makes an
+--        object URL of its own.
+--
+--   D21. COMPOSE REQUIRES MEDIA AND UPLOADS FIRST. The server refuses a
+--        status with no media, so Post is disabled until at least one
+--        upload has finished and none is in flight or rejected. Each file
+--        uploads when picked, in its own fiber. Limits come from
+--        /api/v1.1/compose/settings and are applied before the upload
+--        (count, size, type), with Pixelfed's stock defaults when that
+--        call fails. Alt text is set with PUT /api/v1/media/{id} when its
+--        field loses focus and again, for anything still unsaved, before
+--        the status is created, so the attachment carries it from the
+--        start.
+--
+--   D22. DELETING A POST TAKES TWO TAPS AND NO DIALOG. On the viewer's
+--        own post the header shows a delete action; the first tap draws
+--        a confirmation strip in the page, the second sends DELETE, and
+--        success leaves the screen through history.back(). No window
+--        .confirm(): a native dialog blocks the webview's IPC and cannot
+--        be exercised headlessly.
+--
+-- IMPLEMENTATION STATUS at the third batch, 2026-11-09:
+--
+--   BUILT      D2, D3, D4, D5, D6, D7, D8, D9, D11, D13, D14, D15, D17,
+--              D19, D20, D21, D22. Rules SessionRestored, LoginStarted,
+--              LoginCompleted, LoginFailed, LoggedOut, RequestSent,
+--              CursorFollowed, FeedLoads, FeedLoadsMore, ToggleApplied,
+--              SensitiveRevealed, DetailOpens, ReplyPosted,
+--              CommentDeleted, PostDeleted, ProfileOpens, FollowToggled,
+--              ProfilePages, NotificationsLoad, NotificationsLoadMore,
+--              NotificationOpened, ComposeOpens, MediaPicked,
+--              MediaUploaded, AltTextSaved, PostCreated. Surfaces
+--              LoginScreen, Feed, PostDetail, Profile, Notifications,
+--              Compose, DevShell. The Rust core has 20 unit tests
+--              including a loopback OAuth round trip, the RFC 7636
+--              appendix B vector and the upload bounds; the decoders have
+--              60 fixture checks; the bundled UI passes a 105-step
+--              headless run against a mock of the Shell contract that
+--              includes the raw-body upload (KnownIssue
+--              smoke_harness_external).
+--   PARTIAL    D10: the desktop redirect is built and tested; the deep
+--              link branch is not written. D12: FileStore only. D16: the
+--              module is written and parses; it has not been deployed.
+--              The Tauri crate, including the media_upload command, type-
+--              checks against the fetched sources of tauri 2.12.5 and
+--              tauri-plugin-opener 2.7.2 by reading, not by compiling: the
+--              environment the spec was written in has no GTK or WebKitGTK.
+--   NOT BUILT  D18. Surfaces Search, Discover, DirectMessages, Settings,
+--              Stories, Admin. Notification type filters, editing a
+--              published post, deleting a post from the feed or the
+--              profile grid, infinite scroll (the lists end in a Load more
+--              button), blurhash placeholders, hashtag and mention links,
+--              token revocation (impossible against stock Pixelfed), a Nix
+--              package for the bundle and the desktop binary; the android
+--              devShell has never been entered.
+
+------------------------------------------------------------
+-- Given
+------------------------------------------------------------
+
+given {
+    shell: Shell
+    ui: Ui
+    instance: Instance
+}
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+-- A Pixelfed server as the client meets it: one https origin, the
+-- Mastodon-shaped API with Pixelfed's additions, OAuth 2 through Laravel
+-- Passport.
+external entity Instance {
+    domain: Domain
+    software: String
+    version: String
+    cors_open: Boolean       -- false on every stock instance
+    public_timeline: Boolean
+}
+
+-- The operating system's browser, where the consent page is shown. The
+-- app never embeds a login page of its own.
+external entity SystemBrowser {
+    opened_url: String?
+}
+
+-- A person with an account on an instance.
+external entity Person {
+    instance: Instance
+    account_id: String
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+-- A validated host. parse accepts an optional scheme, trailing slashes
+-- and mixed case, rejects paths, queries, userinfo and hosts without a
+-- dot (localhost excepted), lower-cases, and keeps an explicit port.
+value Domain {
+    host: String
+    port: Integer?
+
+    invariant BaseIsHttps {
+        base_url = "https://" + host + (if port != null: ":" + port else "") + "/"
+    }
+}
+
+-- An absolute URL taken from a Link header. The UI holds it as a string
+-- it may not dereference; only Shell.api_follow may, after validation.
+value Cursor {
+    url: String
+}
+
+value ApiRequest {
+    method: GET | POST | PUT | DELETE
+    path: String            -- must start with /api/
+    query: List<(String, String)>
+    body: Json?
+}
+
+value ApiResponse {
+    status: Integer
+    body: Json
+    next: Cursor?
+    prev: Cursor?
+}
+
+-- What the UI may know about who is logged in.
+value SessionSummary {
+    domain: String
+    account: { id: String, acct: String }?
+}
+
+-- Serialised as { kind, message, status? } so the UI decodes a closed sum.
+value AppError {
+    kind: no_session | invalid_domain | network | http | protocol
+        | unsupported | storage | login_aborted
+        | decode            -- raised only by the UI's own decoders
+    message: String
+    status: Integer?        -- http only
+}
+
+value Page<T> {
+    items: List<T>
+    next: Cursor?
+    prev: Cursor?
+}
+
+-- One file for POST /api/v2/media. The bytes are the raw IPC body (D20).
+value MediaUpload {
+    bytes: Bytes
+    filename: String
+    mime: String
+    description: String?
+}
+
+-- RFC 7636. The verifier never leaves Rust.
+value Pkce {
+    verifier: String        -- 32 random bytes, base64url without padding (43 characters)
+    challenge: String       -- base64url(SHA-256(verifier))
+}
+
+------------------------------------------------------------
+-- Contracts
+------------------------------------------------------------
+
+-- crates/pixelfed-core. No UI, no webview, no Tauri. Everything that
+-- touches the network or the token.
+contract Core {
+    probe: (domain: Domain) -> InstanceProbe | AppError
+    login_begin: (domain: Domain) -> PendingLogin | AppError
+    login_finish: (pending: PendingLogin) -> SessionSummary | AppError
+    logout: () -> () | AppError
+    api_request: (request: ApiRequest) -> ApiResponse | AppError
+    api_follow: (url: String) -> ApiResponse | AppError
+    media_upload: (upload: MediaUpload) -> ApiResponse | AppError
+    session_summary: () -> SessionSummary?
+
+    @invariant ApiPathsOnly
+        -- api_request refuses a path not starting with /api/ before any
+        -- network activity (api::request_url).
+
+    @invariant UploadsBounded
+        -- media_upload refuses an empty body and a body over
+        -- max_upload_bytes before any network activity (api::upload); the
+        -- instance's own limit is applied by the UI before the bytes are
+        -- read and by the server after.
+
+    @invariant PkceAlways
+        -- login_begin generates a fresh Pkce; authorize_url carries
+        -- code_challenge and code_challenge_method=S256; exchange_code
+        -- sends code_verifier (oauth::Pkce, tested against RFC 7636
+        -- appendix B).
+
+    @invariant CursorsValidated
+        -- api_follow parses the URL and requires https, the session
+        -- domain's host and port, and a path under /api/ (api::follow_url,
+        -- Domain::owns).
+
+    @invariant RedirectsDropTheToken
+        -- reqwest follows at most five redirects and removes Authorization
+        -- when the host changes; the client is built with that policy.
+
+    @invariant ErrorsAreTyped
+        -- Every failure is an AppError variant. A non-2xx answer becomes
+        -- http with the server's error or message field, or the first 200
+        -- characters of the body.
+
+    @guidance
+        -- Modules: domain, instance (nodeinfo probe, version floor
+        -- 0.12.3), oauth (apps, Pkce, authorize URL, loopback listener,
+        -- token exchange), link (RFC 8288 parser honouring quotes), api
+        -- (request_url, follow_url, send, upload: reqwest multipart with
+        -- Part file_name and mime_str, plus a description part when
+        -- given), session, store (SecretStore, FileStore), core (Core,
+        -- PendingLogin). User agent Pellucid/<version>
+        -- (+https://harryprayiv.com). Request timeout 30 s, which bounds
+        -- an upload too; login timeout 10 min.
+}
+
+-- Where the session is persisted.
+contract SecretStore {
+    load: () -> Session? | AppError
+    save: (session: Session) -> () | AppError
+    clear: () -> () | AppError
+
+    @invariant DesktopFileIsPrivate
+        -- FileStore writes <app data dir>/session.json through a temporary
+        -- file with mode 0600 and renames it into place; load tolerates a
+        -- missing file and reports a corrupt one as storage.
+
+    @guidance
+        -- Mobile stores are not written. The trait is the only thing a
+        -- platform store has to implement.
+}
+
+-- src-tauri. The IPC the webview sees. Command names and payloads are the
+-- whole of what App.Backend.Tauri knows.
+contract Shell {
+    session_get: () -> SessionSummary?
+    instance_probe: (domain: String) -> InstanceProbe | AppError
+    login_start: (domain: String) -> { authorize_url: String } | AppError
+    logout: () -> () | AppError
+    api_request: (request: ApiRequest) -> ApiResponse | AppError
+    api_follow: (url: String) -> ApiResponse | AppError
+    media_upload: (body: Bytes, headers: { x-filename, x-mime, x-description }) -> ApiResponse | AppError
+
+    event session-changed: SessionSummary?
+    event login-failed: AppError
+
+    @invariant NoProtocolLogic
+        -- Each command calls one Core method; the only extra behaviour is
+        -- opening the system browser (login_start), emitting the two
+        -- events, and unpacking the raw body and percent-decoding the
+        -- three headers of media_upload. A JSON body on media_upload is
+        -- refused as protocol; a missing filename becomes "upload", a
+        -- missing MIME type application/octet-stream, an empty
+        -- description none.
+
+    @invariant TokenAbsent
+        -- No command result and no event payload contains access_token,
+        -- client_secret or refresh_token (D3).
+
+    @guidance
+        -- tauri.conf.json: withGlobalTauri true; CSP default-src 'self';
+        -- script-src 'self'; style-src 'self'; img-src 'self' https: data:
+        -- blob:; media-src https: blob:; connect-src ipc:
+        -- http://ipc.localhost; font-src 'self'; object-src 'none';
+        -- base-uri 'none'. Capability default: core:default only.
+        -- Plugins: opener (used from Rust, so it needs no capability).
+        -- beforeDevCommand { script: "mkdir -p dist && cp static/index.html
+        -- static/style.css dist/ && spago bundle", wait: true }.
+}
+
+-- src/App/Backend.purs: the record every screen uses. One field per Shell
+-- command plus the two subscriptions. App.Backend.Tauri implements it.
+contract Backend {
+    sessionGet: () -> Aff (Either AppError (Maybe SessionSummary))
+    instanceProbe: (domain: String) -> Aff (Either AppError InstanceProbe)
+    loginStart: (domain: String) -> Aff (Either AppError LoginStarted)
+    logout: () -> Aff (Either AppError Unit)
+    apiRequest: (request: ApiRequest) -> Aff (Either AppError ApiResponse)
+    apiFollow: (cursor: Cursor) -> Aff (Either AppError ApiResponse)
+    mediaUpload: (upload: MediaUpload) -> Aff (Either AppError ApiResponse)
+    onSessionChanged: (handler) -> Effect (Effect Unit)
+    onLoginFailed: (handler) -> Effect (Effect Unit)
+
+    @invariant NeverThrows
+        -- Both foreign invokes resolve to { ok, value } or { ok, error }
+        -- and never reject; a thrown exception, an IPC rejection, an
+        -- AppError and an undecodable payload all become Left AppError.
+        -- Reading a File's bytes is the one Aff that may throw, and the
+        -- composer catches it (MediaUploaded).
+
+    @guidance
+        -- A second implementation over fetch would serve a Pellucid server
+        -- that sets CORS headers. It is not written and nothing depends on
+        -- it; the seam exists so that screens never import the Tauri
+        -- module.
+}
+
+-- D7. Every foreign module in the frontend, with what it supplies.
+contract ForeignBudget {
+    App.Backend.Tauri.js: invokeImpl, invokeRawImpl (Uint8Array body, percent-encoded headers), listenImpl over window.__TAURI__
+    Util.File.js: arrayBufferImpl, file.arrayBuffer()
+
+    @invariant Named
+        -- A foreign module not listed here is not in the tree. Test
+        -- fixtures are read by test/Test/Main.js, which is test code and
+        -- not shipped.
+}
+
+-- The routes the client uses, as pixelfed-rn calls them.
+contract PixelfedApi {
+    nodeinfo:            GET  /api/nodeinfo/2.0.json
+    register_app:        POST /api/v1/apps                               form
+    authorize:           GET  /oauth/authorize                            browser
+    token:               POST /oauth/token                                form
+    verify:              GET  /api/v1/accounts/verify_credentials         _pe
+    home:                GET  /api/v1/timelines/home                      _pe limit=20   Link
+    public:              GET  /api/v1/timelines/public                    _pe limit=20   Link
+    status:              GET  /api/v1/statuses/{id}                       _pe
+    context:             GET  /api/v1/statuses/{id}/context               _pe            no Link, 100 max
+    favourite:           POST /api/v1/statuses/{id}/favourite             _pe            Pixelfed entity
+    unfavourite:         POST /api/v1/statuses/{id}/unfavourite           _pe            Pixelfed entity
+    bookmark:            POST /api/v1/statuses/{id}/bookmark              _pe ignored    Mastodon entity
+    unbookmark:          POST /api/v1/statuses/{id}/unbookmark            _pe ignored    Mastodon entity
+    reply:               POST /api/v1/statuses                            _pe  body { status, in_reply_to_id, visibility, sensitive }
+    create:              POST /api/v1/statuses                            _pe  body { status, media_ids, visibility, sensitive, comments_disabled, spoiler_text? }
+    delete:              DELETE /api/v1/statuses/{id}                                    comments and own posts
+    account:             GET  /api/v1/accounts/{id}                       _pe
+    account_statuses:    GET  /api/v1/accounts/{id}/statuses              _pe limit=24 [max_id]   no Link
+    relationships:       GET  /api/v1/accounts/relationships?id[]=        _pe
+    follow:              POST /api/v1/accounts/{id}/follow
+    unfollow:            POST /api/v1/accounts/{id}/unfollow
+    notifications:       GET  /api/v1/notifications                       _pe limit=20   Link, server cap 40
+    compose_settings:    GET  /api/v1.1/compose/settings
+    media_upload:        POST /api/v2/media                               multipart file [description]   Rust only
+    media_update:        PUT  /api/v1/media/{id}                          body { description }
+
+    @invariant EveryReadAsksForThePixelfedEntity
+        -- Every GET above carries _pe=1 (Pixelfed.Client pixelfedEntity),
+        -- except compose_settings, which is not an entity read.
+
+    @guidance
+        -- spoiler_text is sent only when non-empty after trimming, so a
+        -- post that is not sensitive never carries one. Routes pixelfed-rn
+        -- uses that are not here are the NOT BUILT surfaces: search
+        -- (/api/v2/search), discover (/api/v1.1/discover/*), hashtags,
+        -- conversations and /api/v1.1/direct/*, followers and following
+        -- (Pixelfed's cursor= pagination, a third scheme), stories
+        -- (/api/v1.2/stories/*), settings, admin, and notification
+        -- filtering by types[].
+}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+enum Method { GET | POST | PUT | DELETE }
+
+-- Unknown values are kept, not rejected (D8).
+enum Visibility { public | unlisted | private | direct | draft | other(String) }
+
+enum PfType {
+    photo
+    | photo_album
+    | video
+    | video_album
+    | photo_video_album
+    | share
+    | text
+    | other(String)
+}
+
+enum MediaType { image | video | gifv | audio | unknown }
+
+-- Hash routes: #/, #/public, #/notifications, #/compose, #/profile/{id},
+-- #/status/{id}.
+enum Route { home | public | notifications | compose | profile(AccountId) | status_detail(StatusId) }
+
+-- NotificationTransformer::replaceTypeVerb output; unknown verbs kept (D8).
+enum NotificationKind {
+    follow | mention | share | favourite | comment | tagged | modlog
+    | direct | story_react | story_comment | other(String)
+}
+
+-- One picked file in the composer. rejected covers both a local refusal
+-- (too large, type not allowed) and a failed upload, with the reason.
+enum ItemPhase { uploading | uploaded(MediaAttachment) | rejected(String) }
+
+enum Posting { idle | posting | failed(String) }
+
+enum Deletion { not_armed | armed | deleting }
+
+enum Phase { booting | boot_failed(String) | logged_out | logged_in(SessionSummary) }
+
+enum LoginPhase { entering | working | waiting(LoginStarted) | failed(AppError) }
+
+enum FeedState { loading | failed(AppError) | loaded }
+
+enum MoreState { idle | loading_more | more_failed(AppError) | exhausted }
+
+enum Toggle { favourite | bookmark }
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+-- Rust side only (D3).
+entity Session {
+    domain: Domain
+    client_id: String
+    client_secret: String
+    access_token: String
+    refresh_token: String?
+    account: { id: String, acct: String }?
+}
+
+-- A login that has begun: the port is bound, the client registered, the
+-- browser opened, the code not yet received.
+entity PendingLogin {
+    domain: Domain
+    client_id: String
+    client_secret: String
+    redirect_uri: String
+    state: String            -- UUID v4, simple form
+    pkce: Pkce
+    authorize_url: String
+}
+
+entity Account {
+    id: AccountId
+    username: String
+    acct: String
+    display_name: String
+    note: String             -- HTML, never rendered as such
+    note_text: String?
+    url: String
+    avatar: String
+    locked: Boolean
+    followers_count: Integer
+    following_count: Integer
+    statuses_count: Integer
+    local: Boolean
+    is_admin: Boolean
+    created_at: String
+    website: String?
+    header_bg: String?
+    pronouns: List<String>
+    has_story: Boolean
+}
+
+entity MediaAttachment {
+    id: MediaId
+    type: MediaType
+    url: String
+    preview_url: String?
+    optimized_url: String?
+    description: String?
+    blurhash: String?
+    is_nsfw: Boolean
+    mime: String?
+    dimensions: { width: Integer, height: Integer }?   -- meta.original
+}
+
+entity Status {
+    id: StatusId
+    uri: String
+    url: String?
+    created_at: String
+    edited_at: String?
+    account: Account
+    content: String          -- HTML, never rendered as such
+    content_text: String?
+    visibility: Visibility
+    sensitive: Boolean
+    spoiler_text: String
+    pf_type: PfType
+    media_attachments: List<MediaAttachment>
+    favourites_count: Integer
+    reblogs_count: Integer
+    reply_count: Integer
+    favourited: Boolean
+    reblogged: Boolean
+    bookmarked: Boolean
+    comments_disabled: Boolean
+    in_reply_to_id: StatusId?
+    in_reply_to_account_id: AccountId?
+    reblog: Status?
+    tags: List<{ name: String, url: String }>
+    mentions: List<{ id: AccountId, username: String, acct: String, url: String }>
+    liked_by: { id: AccountId?, username: String?, others: Boolean, total_count: Integer }?
+    place: { name: String, country: String? }?
+    local: Boolean
+    pinned: Boolean
+
+    -- The status whose media and caption are shown: reblog when present.
+    let displayed = reblog or this
+}
+
+entity Relationship {
+    id: AccountId
+    following: Boolean
+    followed_by: Boolean
+    blocking: Boolean
+    muting: Boolean
+    requested: Boolean
+}
+
+entity Root {
+    phase: Phase
+    route: Route
+}
+
+-- One timeline screen (home or public).
+entity Feed {
+    kind: home | public
+    state: FeedState
+    statuses: List<Status>
+    next: Cursor?
+    more: MoreState
+    now: Instant?
+    revealed: Set<StatusId>
+    busy: Set<StatusId>
+    notice: String?
+}
+
+entity Detail {
+    id: StatusId
+    me: AccountId?
+    main: pending | missing(AppError) | ready(Status)
+    comments: pending | missing(AppError) | ready(List<Status>)
+    reply: { text: String, sending: Boolean, error: String? }
+    deletion: Deletion
+    revealed: Set<StatusId>
+    busy: Set<StatusId>
+    notice: String?
+
+    -- The displayed post belongs to the viewer.
+    let is_mine = main is ready and main.displayed.account.id = me
+}
+
+entity Profile {
+    id: AccountId
+    me: AccountId?
+    account: pending | missing(AppError) | ready(Account)
+    relationship: Relationship?
+    relationship_busy: Boolean
+    posts: List<Status>
+    posts_phase: loading | idle | exhausted | failed(AppError)
+    notice: String?
+
+    let is_self = me = id
+}
+
+-- One entry of GET /api/v1/notifications. account is the actor; it,
+-- status and tagged are optional because the server drops what it can no
+-- longer load and because a part that fails to decode must not take the
+-- row with it (D8).
+entity Notification {
+    id: NotificationId
+    kind: NotificationKind
+    created_at: String
+    account: Account?
+    status: Status?
+    tagged: { username: String, status_id: StatusId }?
+}
+
+-- GET /api/v1.1/compose/settings. Sizes are kilobytes, as Laravel's max:
+-- rule counts uploads.
+entity ComposeSettings {
+    allowed_media_types: List<String>      -- empty means the server did not say
+    max_caption_length: Integer
+    max_file_size_kb: Integer
+    max_media_attachments: Integer
+    max_alt_text_length: Integer
+    default_visibility: Visibility?
+}
+
+-- What the composer sends to create.
+entity NewPost {
+    caption: String
+    media_ids: List<MediaId>
+    visibility: Visibility
+    sensitive: Boolean
+    spoiler_text: String
+    comments_disabled: Boolean
+}
+
+entity Notifications {
+    list: loading | failed(AppError) | loaded
+    items: List<Notification>
+    next: Cursor?
+    more: MoreState
+    now: Instant?
+}
+
+-- One picked file in the composer.
+entity ComposeItem {
+    key: Integer
+    name: String
+    mime: String
+    size_bytes: Number
+    phase: ItemPhase
+    alt_text: String
+    alt_saved: String        -- the description the server holds
+    alt_busy: Boolean
+    alt_error: String?
+}
+
+entity Compose {
+    settings: ComposeSettings
+    items: List<ComposeItem>
+    next_key: Integer
+    caption: String
+    visibility: Visibility   -- public, unlisted or private
+    sensitive: Boolean
+    spoiler_text: String
+    comments_disabled: Boolean
+    posting: Posting
+    notice: String?
+
+    let uploaded_ids = items where phase is uploaded, their attachment ids
+    let can_post = items != [] and every item.phase is uploaded
+                   and no item.alt_busy and posting != posting
+                   and length(caption) <= settings.max_caption_length
+                   and (not sensitive or length(spoiler_text) <= max_spoiler_length)
+}
+
+entity KnownIssue {
+    name: String
+    status: open | closed
+    effect: String
+    closes_when: String
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    min_pixelfed_version: String = "0.12.3"
+    scopes: String = "read write follow push"
+    client_name: String = "Pellucid"
+    client_website: String = "https://harryprayiv.com"
+    identifier: String = "com.harryprayiv.pellucid"
+    request_timeout: Duration = 30.seconds
+    login_timeout: Duration = 10.minutes
+    max_redirects: Integer = 5
+    feed_page: Integer = 20
+    profile_page: Integer = 24
+    notifications_page: Integer = 20          -- the server caps it at 40
+    relationship_batch_max: Integer = 20
+    session_file: String = "session.json"
+    session_file_mode: String = "0600"
+    max_upload_bytes: Integer = 536870912     -- 512 MiB, Rust's ceiling before the instance's own
+    max_spoiler_length: Integer = 140         -- POST /api/v1/statuses validation
+    pkce_verifier_bytes: Integer = 32
+    -- Pixelfed's stock values, used when compose_settings cannot be read.
+    default_allowed_media_types: List<String> = ["image/jpeg", "image/jpg", "image/png", "image/gif"]
+    default_max_caption_length: Integer = 500
+    default_max_file_size_kb: Integer = 15000
+    default_max_media_attachments: Integer = 4
+    default_max_alt_text_length: Integer = 1000
+}
+
+------------------------------------------------------------
+-- Defaults
+------------------------------------------------------------
+
+default KnownIssue no_token_revoke = {
+    name: "logout does not revoke the token on the server",
+    status: open,
+    effect: "a token copied out of session.json before logout stays valid until the instance expires it; the person can only revoke it from the instance's own settings page",
+    closes_when: "the server offers a route that revokes the caller's own token. Stock Pixelfed does not: Passport ships no RFC 7009 /oauth/revoke, DELETE /oauth/tokens/{id} needs the browser session, and /api/v1.1/accounts/apps-and-applications/{id}/revoke answers 422 for the current token. A Pellucid server will offer one; against Pixelfed this stays open"
+}
+
+default KnownIssue orphan_uploads = {
+    name: "an upload removed from the composer, or abandoned with it, stays on the server",
+    status: open,
+    effect: "media uploaded through POST /api/v2/media and never attached to a status counts against the account's daily upload limit and storage until Pixelfed's media garbage collector removes it",
+    closes_when: "removing an uploaded item sends DELETE /api/v1/media/{id} where the instance supports it, and leaving the composer with uploads asks first"
+}
+
+default KnownIssue smoke_harness_external = {
+    name: "the headless UI run is not in the repository",
+    status: open,
+    effect: "scripts/check.fish does not run it; the 105 checks that exercise login, feeds, detail, profile, notifications, compose and deletion against a mock of the Shell contract exist only where the port was written, so a change can pass the gate and break a screen",
+    closes_when: "the harness and its jsdom dependency come from nixpkgs into test/smoke and check.fish runs it after spago bundle"
+}
+
+default KnownIssue mobile_store_missing = {
+    name: "no SecretStore for Android or iOS",
+    status: open,
+    effect: "the mobile shells cannot persist a session; a phone build would ask for login on every start",
+    closes_when: "a Kotlin and a Swift store behind the SecretStore trait, exercised by the same round-trip test FileStore has"
+}
+
+default KnownIssue deep_link_unwritten = {
+    name: "the mobile redirect branch of D10 is not written",
+    status: open,
+    effect: "a phone build cannot complete login; the loopback listener is unreachable from a system browser on Android and iOS",
+    closes_when: "tauri-plugin-deep-link registers a scheme, the redirect URI registered in /api/v1/apps is that scheme on mobile, and on_open_url hands the code and state to login_finish"
+}
+
+default KnownIssue tauri_shell_uncompiled = {
+    name: "src-tauri was reviewed against crate sources, not compiled, when this spec was written",
+    status: open,
+    effect: "a typo in src-tauri surfaces on the first cargo tauri dev rather than before delivery",
+    closes_when: "cargo clippy -p pellucid -- -D warnings has run clean in the dev shell on winsmuth"
+}
+
+default KnownIssue android_shell_untested = {
+    name: "the android devShell has never been entered",
+    status: open,
+    effect: "SDK, NDK and build-tools versions in flake.nix are a first guess",
+    closes_when: "cargo tauri android init and cargo tauri android dev succeed from that shell on winsmuth"
+}
+
+default KnownIssue lab_instance_undeployed = {
+    name: "pixelfed-lab.nix has been parsed but not built or deployed",
+    status: open,
+    effect: "the client has only been exercised against a mock of the Shell contract and against the reading of the server's source",
+    closes_when: "./build boot blade with the module imported, a user created with pixelfed-manage, and one login plus one home timeline fetched from Pellucid"
+}
+
+default KnownIssue feeds_end_in_a_button = {
+    name: "no infinite scroll",
+    status: open,
+    effect: "each feed and the profile grid stop at a Load more button",
+    closes_when: "an IntersectionObserver sentinel below the list triggers LoadMore while more is idle, with the button kept as the fallback"
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- Session ----------------------------------------------------------------
+
+rule SessionRestored {
+    when: AppStarted()
+    ensures:
+        shell.core.session = shell.store.load()
+        ui.root.route = ParsedHash() or home
+        ui.root.phase = if shell.session_get() = null: logged_out
+                        else: logged_in(shell.session_get())
+
+    @guidance
+        -- Root subscribes to session-changed and to hash changes before it
+        -- asks for the session, so nothing emitted during boot is missed.
+        -- A storage error at load is shown as boot_failed with the
+        -- message; it is the one state with no button, since the fix is
+        -- outside the app.
+}
+
+rule LoginStarted {
+    when: LoginSubmitted(domain_text)
+    requires: trim(domain_text) != ""
+    requires: ui.login.phase != working
+    let domain = Domain.parse(domain_text)
+    ensures:
+        if domain is AppError:
+            ui.login.phase = failed(domain)
+        else:
+            instance.probed                                  -- nodeinfo, floor 0.12.3
+            pending = PendingLogin{ listener bound on 127.0.0.1:0,
+                                    client registered with redirect_uri = that port,
+                                    state = fresh UUID,
+                                    pkce = fresh Pkce }
+            pending.authorize_url carries client_id, redirect_uri, response_type=code,
+                scope, state, code_challenge = pkce.challenge, code_challenge_method = S256
+            SystemBrowser.opened_url = pending.authorize_url
+            ui.login.phase = waiting({ authorize_url })
+
+    @guidance
+        -- login_start returns as soon as the browser is opened; the rest
+        -- happens in a spawned task. The waiting screen shows the URL as
+        -- text for the case where no browser opened.
+}
+
+rule LoginCompleted {
+    when: RedirectReceived(request_line)
+    requires: request_line is GET /callback with state = pending.state and a non-empty code
+    ensures:
+        listener answered 200 with the "Logged in" page
+        token = POST /oauth/token (code, client_id, client_secret, redirect_uri, scope,
+                                   code_verifier = pending.pkce.verifier)
+        session = Session{ domain, client_id, client_secret, token.access_token, token.refresh_token }
+        session.account = GET verify_credentials?_pe=1 → { id, acct }
+        shell.store.save(session)
+        shell.core.session = session
+        Emitted(session-changed, session.summary)
+        ui.root.phase = logged_in(summary)
+        ui.root.route = home
+
+    @guidance
+        -- A request with the wrong state, another path or a method other
+        -- than GET is answered 404 and the listener keeps waiting; an
+        -- error parameter ends the login with login_aborted. The code is
+        -- used once; the listener closes after the first accepted request.
+}
+
+rule LoginFailed {
+    when: LoginTaskEnded(error)
+    ensures:
+        Emitted(login-failed, error)
+        ui.login.phase = failed(error)
+
+    @guidance
+        -- Covers the timeout (10 minutes without a redirect), a refused
+        -- token exchange, a failed verify_credentials and a store that
+        -- cannot be written. The domain field keeps its text.
+}
+
+rule LoggedOut {
+    when: LogoutPressed()
+    ensures:
+        shell.store.clear()
+        shell.core.session = null
+        Emitted(session-changed, null)
+        ui.root.phase = logged_out
+        ui.root.route = home
+
+    @guidance
+        -- When clear fails the UI still moves to logged_out: the file
+        -- could not be removed, which is reported, but the person asked
+        -- to leave. KnownIssue no_token_revoke.
+}
+
+-- Transport --------------------------------------------------------------
+
+rule RequestSent {
+    when: ApiRequested(request)
+    requires: shell.core.session != null
+    requires: request.path starts with "/api/"
+    let url = session.domain.base_url + request.path + query
+    ensures:
+        Sent(request.method, url,
+             headers: Authorization Bearer token, Accept application/json,
+             body as JSON when present)
+        response = ApiResponse{ status, body parsed as JSON or null when empty,
+                                next and prev from the Link header }
+        or AppError.http(status, message) when status is not 2xx
+        or AppError.protocol when the body is not JSON
+
+    @guidance
+        -- No session: no_session before any network activity. A path
+        -- outside /api/: protocol, before any network activity.
+}
+
+rule CursorFollowed {
+    when: CursorFollowed(cursor)
+    requires: shell.core.session != null
+    requires: cursor.url parses, scheme = https, host and port = session.domain, path starts with "/api/"
+    ensures:
+        RequestSent(GET cursor.url) with the same headers as RequestSent
+
+    @guidance
+        -- A cursor that fails the check is protocol with the offending
+        -- URL in the message. The UI never builds or edits a cursor.
+}
+
+-- Feeds ------------------------------------------------------------------
+
+rule FeedLoads {
+    when: FeedOpened(kind) or FeedRefreshed(kind)
+    ensures:
+        feed.state = loading
+        feed.now = Now()
+        page = GET (home | public) timeline ?_pe=1&limit=20
+        if page is AppError: feed.state = failed(page)
+        else:
+            feed.statuses = page.items
+            feed.next = page.next
+            feed.more = idle
+            feed.state = loaded
+
+    @guidance
+        -- Switching between Home and Public reuses one component; a new
+        -- kind resets the feed and loads. Refresh clears the notice.
+}
+
+rule FeedLoadsMore {
+    when: LoadMorePressed()
+    requires: feed.state = loaded and feed.next != null
+    requires: feed.more in { idle, more_failed }
+    ensures:
+        feed.more = loading_more
+        page = CursorFollowed(feed.next)
+        if page is AppError: feed.more = more_failed(page)
+        else:
+            fresh = page.items without ids already in feed.statuses
+            feed.statuses = feed.statuses ++ fresh
+            feed.next = page.next
+            feed.more = if fresh = [] or page.next = null: exhausted else: idle
+            feed.now = Now()
+
+    @guidance
+        -- A page with no new ids ends the list even when the server
+        -- offers another cursor, which stops a loop on a server that
+        -- repeats itself.
+}
+
+rule ToggleApplied {
+    when: TogglePressed(id, toggle)                 -- on a feed, the detail post or a comment
+    requires: id not in busy
+    let target = the displayed status with that id on this screen
+    ensures:
+        busy includes id
+        answer = POST favourite|unfavourite|bookmark|unbookmark by target's current flag, ?_pe=1
+        busy excludes id
+        if answer is AppError: notice = message
+        else:
+            merged = if toggle = favourite: answer
+                     else: target with bookmarked = answer.bookmarked
+            every list on the screen replaces the status with that id by merged,
+                whether it sits at the top level or inside a share wrapper
+
+    @guidance
+        -- Pixelfed.StatusOps holds request, merge, replaceDisplayed and
+        -- replaceAll; Feed and StatusDetail hold only the state glue. The
+        -- card shows the old state while busy and disables the two
+        -- buttons.
+}
+
+rule SensitiveRevealed {
+    when: ShowPressed(id)
+    ensures:
+        revealed includes id
+        the card's media block is drawn in place of the cover
+
+    @guidance
+        -- Media of a sensitive post is not requested until revealed: the
+        -- cover is a div with the spoiler text and one button. The set is
+        -- per screen and resets with it.
+}
+
+-- Post detail ------------------------------------------------------------
+
+rule DetailOpens {
+    when: RouteChanged(status_detail(id))
+    ensures:
+        detail.main = pending; detail.comments = pending
+        in parallel:
+            main = GET /api/v1/statuses/{id}?_pe=1
+            context = GET /api/v1/statuses/{id}/context?_pe=1
+        detail.main = ready(main) or missing(error)
+        detail.comments = ready(context.descendants) or missing(error)
+        the main card is drawn with its Comments button disabled
+        the reply form is drawn unless main.comments_disabled
+
+    @guidance
+        -- Comments are the descendants, flat, in server order. Ancestors
+        -- are fetched and not shown (a comment opened as a post has no
+        -- parent link yet). A Back header action calls history.back().
+}
+
+rule ReplyPosted {
+    when: ReplySubmitted(text)
+    requires: detail.main = ready(main)
+    requires: trim(text) != "" and not detail.reply.sending
+    ensures:
+        detail.reply.sending = true
+        answer = POST /api/v1/statuses?_pe=1
+                 body { status: text, in_reply_to_id: main.displayed.id, visibility: "public", sensitive: false }
+        if answer is AppError: detail.reply = { text, sending: false, error: message }
+        else:
+            detail.comments = ready(comments ++ [answer])
+            detail.reply = { text: "", sending: false, error: null }
+            main.displayed.reply_count += 1
+}
+
+rule CommentDeleted {
+    when: DeletePressed(comment_id)
+    requires: comment.account.id = me
+    requires: comment_id not in busy
+    ensures:
+        busy includes comment_id
+        answer = DELETE /api/v1/statuses/{comment_id}
+        busy excludes comment_id
+        if answer is AppError: notice = message
+        else:
+            detail.comments = ready(comments without comment_id)
+            main.displayed.reply_count -= 1, not below 0
+
+    @guidance
+        -- The delete button exists only on the viewer's own comments and
+        -- sends at once; a comment is cheap to repost. The main post is
+        -- rule PostDeleted, which asks first.
+}
+
+rule PostDeleted {
+    when: DeletePressed() then ConfirmPressed()
+    requires: detail.is_mine
+    requires: detail.deletion = not_armed at the first press, armed at the second
+    ensures:
+        after DeletePressed: detail.deletion = armed, the confirmation strip is drawn, nothing sent
+        after KeepPressed: detail.deletion = not_armed
+        after ConfirmPressed:
+            detail.deletion = deleting
+            answer = DELETE /api/v1/statuses/{main.displayed.id}
+            if answer is AppError: detail.deletion = not_armed; notice = message
+            else: history.back()
+
+    @guidance
+        -- The delete action sits in the header and exists only when
+        -- is_mine; for a share it refers to the displayed post, which is
+        -- the viewer's when the viewer's post was boosted by someone else.
+        -- Reload disarms. The feed or grid the person returns to still
+        -- holds the deleted post until it reloads (NOT BUILT: local
+        -- removal across screens).
+}
+
+-- Notifications ----------------------------------------------------------
+
+rule NotificationsLoad {
+    when: NotificationsOpened() or NotificationsRefreshed()
+    ensures:
+        notifications.list = loading
+        notifications.now = Now()
+        page = GET /api/v1/notifications?_pe=1&limit=20
+        if page is AppError: notifications.list = failed(page)
+        else:
+            notifications.items = page.items
+            notifications.next = page.next
+            notifications.more = idle
+            notifications.list = loaded
+
+    @guidance
+        -- Decoding is per row: a row whose account, status or tagged part
+        -- does not decode keeps the row with that part absent; only a row
+        -- without an id fails the page (Pixelfed.Decode decodeNotification).
+}
+
+rule NotificationsLoadMore {
+    when: LoadMorePressed()
+    requires: notifications.list = loaded and notifications.next != null
+    requires: notifications.more in { idle, more_failed }
+    ensures:
+        notifications.more = loading_more
+        page = CursorFollowed(notifications.next)
+        if page is AppError: notifications.more = more_failed(page)
+        else:
+            fresh = page.items without ids already held
+            notifications.items = notifications.items ++ fresh
+            notifications.next = page.next
+            notifications.more = if fresh = [] or page.next = null: exhausted else: idle
+            notifications.now = Now()
+}
+
+rule NotificationOpened {
+    when: RowPressed(notification)
+    let target =
+        if kind = tagged and tagged != null: status_detail(tagged.status_id)
+        else if kind = comment and status != null: status_detail(status.in_reply_to_id or status.id)
+        else if status != null: status_detail(status.displayed.id)
+        else if account != null: profile(account.id)
+        else: none
+    requires: target != none                      -- a row with no target is drawn disabled
+    ensures:
+        RouteChanged(target)
+
+    @guidance
+        -- The avatar is its own button and always opens the actor. The
+        -- row reads "<actor> <phrase>" with the phrases pixelfed-rn uses:
+        -- followed you, mentioned you, shared your post, liked your post,
+        -- commented on your post, tagged you in a post, left a moderation
+        -- note, sent you a message, reacted to your story, commented on
+        -- your story; an unknown verb is shown as received. Below it, one
+        -- line of the status concerned (a comment's or mention's own text,
+        -- otherwise the caption of the liked or shared post), and to the
+        -- right the first attachment's preview, blank when the post is
+        -- sensitive. "Someone" stands in for a missing actor.
+}
+
+-- Compose ----------------------------------------------------------------
+
+rule ComposeOpens {
+    when: RouteChanged(compose)
+    ensures:
+        compose = Compose{ settings: defaults, items: [], visibility: public, posting: idle }
+        answer = GET /api/v1.1/compose/settings
+        if answer is AppError: notice = "Using default upload limits. " + message
+        else:
+            compose.settings = answer
+            compose.visibility = answer.default_visibility when it is public, unlisted or private
+
+    @guidance
+        -- The picker's accept attribute is the allowed types joined by
+        -- commas, absent when the server listed none. multiple is set
+        -- while more than one slot is free; the picker disappears when
+        -- none is. The limits line reads "Up to N files, M MB each" with
+        -- M = max_file_size_kb / 1000, as Pixelfed shows it.
+}
+
+rule MediaPicked {
+    when: FilesChosen(files)
+    let room = settings.max_media_attachments - length(items)
+    ensures:
+        the input's value is cleared so the same file can be chosen again
+        if length(files) > room: notice names how many were left out
+        for file in the first room files:
+            item = ComposeItem{ key: next_key, name: file.name, mime: file.type or application/octet-stream,
+                                size_bytes: file.size, alt_text: "", alt_saved: "" }
+            item.phase =
+                if file.size > settings.max_file_size_kb * 1024: rejected("Larger than M MB")
+                else if settings.allowed_media_types != [] and item.mime not in them:
+                    rejected("This server does not accept <mime>")
+                else: uploading
+            items = items ++ [item]; next_key += 1
+            if item.phase = uploading: MediaUploaded(item, file) in its own fiber
+
+    @guidance
+        -- The size and type checks are the server's own rules applied
+        -- early, so a 15 MB limit is not discovered after a 15 MB
+        -- transfer. The browser's MIME type comes from the extension; the
+        -- server sniffs the content, so it has the last word and its
+        -- refusal lands in the same rejected state.
+}
+
+rule MediaUploaded {
+    when: MediaUploaded(item, file)
+    ensures:
+        bytes = file.arrayBuffer()              -- a failure to read is rejected("Could not read the file: ...")
+        answer = Shell.media_upload(bytes, x-filename: file.name, x-mime: item.mime, x-description: "")
+                 = Core.media_upload = POST /api/v2/media multipart
+        item.phase = if answer is AppError: rejected(message) else: uploaded(answer as MediaAttachment)
+
+    @guidance
+        -- The attachment decodes with url null and preview_url set; the
+        -- decoder falls back to preview_url for url, and the thumbnail
+        -- is preview_url. Removing an item only drops the row (KnownIssue
+        -- orphan_uploads); an upload in flight for a removed row still
+        -- completes and its answer is ignored because no row has its key.
+}
+
+rule AltTextSaved {
+    when: AltTextBlurred(item) or PostPressed()
+    requires: item.phase = uploaded(m)
+    requires: trim(item.alt_text) != item.alt_saved and not item.alt_busy
+    ensures:
+        item.alt_busy = true
+        answer = PUT /api/v1/media/{m.id} body { description: trim(alt_text) }
+        item.alt_busy = false
+        if answer is AppError: item.alt_error = message
+        else: item.alt_saved = answer.description or trim(alt_text); item.alt_error = null
+
+    @guidance
+        -- On PostPressed every unsaved alt text is saved in parallel
+        -- before the status is created; one failure stops the post with
+        -- "Alt text could not be saved. Fix it or remove the file." The
+        -- field shows "Saved" when its text equals alt_saved and is not
+        -- empty, otherwise its length against max_alt_text_length.
+}
+
+rule PostCreated {
+    when: PostPressed()
+    requires: compose.can_post
+    ensures:
+        compose.posting = posting
+        AltTextSaved for every item that needs it; stop with failed(...) if any fails
+        answer = POST /api/v1/statuses?_pe=1 body {
+            status: trim(caption), media_ids: uploaded_ids, visibility, sensitive,
+            comments_disabled, spoiler_text: trim(spoiler_text) when sensitive and non-empty }
+        if answer is AppError: compose.posting = failed(message)
+        else: RouteChanged(status_detail(answer.id))
+
+    @guidance
+        -- Typing in the caption clears a failed state. The visibility
+        -- select offers Public, Unlisted and Followers only (private);
+        -- direct is a message, not a post. The content warning field
+        -- appears only while sensitive is checked and what it holds is
+        -- not sent otherwise. Leaving the screen discards the composer;
+        -- there are no drafts.
+}
+
+-- Profile ----------------------------------------------------------------
+
+rule ProfileOpens {
+    when: RouteChanged(profile(id))
+    ensures:
+        profile.account = pending
+        in parallel:
+            account = GET /api/v1/accounts/{id}?_pe=1
+            relationship = if is_self: null
+                           else: first of GET /api/v1/accounts/relationships?id[]={id}&_pe=1
+        profile.account = ready(account) or missing(error)
+        profile.relationship = relationship            -- a relationship error is a notice, not a failure
+        if account is ready: ProfilePages(max_id: null)
+
+    @guidance
+        -- The header shows avatar, counts, display name, acct with a lock
+        -- mark when locked, the plain-text bio (note_text, else note
+        -- stripped) and the website as text. The follow button is absent
+        -- on the viewer's own profile.
+}
+
+rule FollowToggled {
+    when: FollowPressed()
+    requires: profile.relationship = r and not profile.relationship_busy
+    ensures:
+        profile.relationship_busy = true
+        answer = if r.following or r.requested: POST /unfollow else: POST /follow
+        profile.relationship_busy = false
+        if answer is AppError: notice = message
+        else: profile.relationship = answer
+
+    @guidance
+        -- Labels: Following when following, Requested when requested,
+        -- Follow otherwise; the first two are drawn as secondary buttons.
+        -- Unfollow on a requested relationship withdraws the request, as
+        -- pixelfed-rn does.
+}
+
+rule ProfilePages {
+    when: ProfilePages(max_id) or LoadMorePressed()
+    requires: profile.posts_phase in { idle, failed } or max_id = null
+    ensures:
+        profile.posts_phase = loading
+        page = GET /api/v1/accounts/{id}/statuses?_pe=1&limit=24[&max_id={last id held}]
+        if page is AppError: profile.posts_phase = failed(page)
+        else:
+            fresh = page without ids already held
+            profile.posts = profile.posts ++ fresh
+            profile.posts_phase = if fresh = []: exhausted else: idle
+
+    @guidance
+        -- The grid is three tiles wide; a tile shows the first attachment's
+        -- preview (optimized or original when absent), a play mark for
+        -- video, a stack mark for albums, the word Sensitive for a
+        -- sensitive post, and a caption excerpt for a text post. A locked
+        -- account the viewer does not follow shows "This account is
+        -- private." in place of an empty grid.
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+invariant TokenNeverCrossesTheBridge {
+    for m in ShellMessages:                 -- command results and event payloads
+        not Contains(m, session.access_token)
+        and not Contains(m, session.client_secret)
+        and not Contains(m, session.refresh_token)
+}
+
+invariant TokenOnlyToApiPaths {
+    for r in SentRequests where r.headers has Authorization:
+        r.url.scheme = "https"
+        and r.url.host = session.domain.host and r.url.port = session.domain.port
+        and r.url.path starts with "/api/"
+}
+
+invariant NoHtmlInjection {
+    for n in RenderedNodes:
+        not UsesInnerHtml(n)
+}
+
+invariant ForeignBudgetHeld {
+    for f in FrontendSources where f.extension = "js":
+        f in ForeignBudget or f under "test/"
+}
+
+invariant HttpsOnly {
+    for d in Domains:
+        d.base_url starts with "https://"
+}
+
+invariant WarningFreeBuild {
+    -- D15. scripts/check.fish is the executable form of this invariant.
+    for b in Builds where b.delivered:
+        b.purs_warnings = 0 and b.clippy_warnings = 0 and b.tidy_clean and b.fmt_clean
+}
+
+invariant ServerIsTruthForToggles {
+    for t in Toggles:
+        t.shown_state changes only when t.answer arrives
+}
+
+invariant LenientDecodersKeepTheFeed {
+    for s in ServerStatuses:
+        Decodes(s) unless s lacks id, uri, created_at or account.{id, username, acct, url}
+}
+
+invariant PagesNeverRepeat {
+    for l in StatusLists:
+        Unique(l.map(statusId))
+    for l in NotificationLists:
+        Unique(l.map(id))
+}
+
+invariant NoPostWithoutMedia {
+    -- D21. The server's rule, held on the client so the 403 is never seen.
+    for c in StatusCreates where c.in_reply_to_id = null:
+        c.media_ids != []
+}
+
+invariant BytesCrossOnce {
+    -- D20. A picked file is read once, sent once and never written.
+    for u in MediaUploads:
+        u.read_count = 1 and u.ipc_body_is_raw and not u.touched_disk_in_shell
+}
+
+invariant VerifierStaysInRust {
+    -- D19.
+    for m in ShellMessages:
+        not Contains(m, pending.pkce.verifier)
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor Viewer {
+    identified_by: Person where instance.probed
+}
+
+actor Developer {
+    identified_by: Person where has the repository and the dev shell
+}
+
+actor Adopter {
+    identified_by: Person where runs their own instance
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface LoginScreen {
+    facing viewer: Viewer
+
+    exposes:
+        ui.login.phase
+        ui.login.authorize_url when waiting
+
+    provides:
+        LoginStarted(domain_text) when phase in { entering, failed }
+        Reset() when phase = waiting
+
+    contracts:
+        demands Shell
+        demands Core
+
+    @guarantee NoEmbeddedLogin
+        -- The password is typed into the system browser on the instance's
+        -- own page, never into the app.
+
+    @guarantee NothingLeaksOnFailure
+        -- A failed login leaves no session file and no partial session in
+        -- memory; the registered client is abandoned on the server.
+}
+
+surface Feed {
+    facing viewer: Viewer
+
+    exposes:
+        feed.statuses as cards: boost line, avatar, names, age, media or
+            sensitive cover, like with count, comments with count, bookmark,
+            spoiler, caption, place
+        feed.more
+        feed.notice
+
+    provides:
+        FeedLoads(kind) via the Home and Public tabs and the Refresh button
+        FeedLoadsMore() when feed.next != null and feed.more in { idle, more_failed }
+        ToggleApplied(id, favourite | bookmark)
+        SensitiveRevealed(id)
+        RouteChanged(profile(account_id)) from avatar and name
+        RouteChanged(status_detail(id)) from the comments button
+
+    contracts:
+        demands Backend
+        demands PixelfedApi
+
+    @guidance
+        -- The card is a render function (View.StatusCard), not a
+        -- component; the feed owns revealed and busy. The album layout is
+        -- a scroll-snapped row; a single video is a <video controls
+        -- playsinline preload=metadata> with the preview as poster.
+}
+
+surface PostDetail {
+    facing viewer: Viewer
+
+    exposes:
+        the post as a card with its comments button disabled
+        a delete action in the header when is_mine, and detail.deletion as
+            the confirmation strip
+        detail.comments as rows: avatar, name, age, text, like with count,
+            delete on the viewer's own comments
+        detail.reply
+        detail.notice
+
+    provides:
+        DetailOpens(id)
+        ToggleApplied(id, favourite | bookmark) on the post and on comments
+        SensitiveRevealed(id)
+        ReplyPosted(text) unless comments_disabled
+        CommentDeleted(id) when comment.account.id = me
+        PostDeleted() when is_mine
+        RouteChanged(profile(account_id)) from avatars
+        Back()
+
+    contracts:
+        demands Backend
+        demands PixelfedApi
+}
+
+surface Notifications {
+    facing viewer: Viewer
+
+    exposes:
+        notifications.items as rows: actor avatar, "<actor> <phrase>",
+            one line of the post concerned, age, thumbnail
+        notifications.more
+
+    provides:
+        NotificationsLoad() via the Alerts tab and the Refresh button
+        NotificationsLoadMore() when next != null and more in { idle, more_failed }
+        NotificationOpened(notification) from the row
+        RouteChanged(profile(actor.id)) from the avatar
+
+    contracts:
+        demands Backend
+        demands PixelfedApi
+
+    @guidance
+        -- One list, every type. Pixelfed's types[] filter offers mention,
+        -- reblog, follow and favourite and nothing for comments, so a
+        -- filter row would be lopsided; it is NOT BUILT.
+}
+
+surface Compose {
+    facing viewer: Viewer
+
+    exposes:
+        compose.items as rows: thumbnail or placeholder, name, state or
+            reason, remove, alt text field with counter or Saved
+        the picker while a slot is free, and the limits line
+        caption with counter, visibility, sensitive, content warning when
+            sensitive, comments off
+        compose.posting as the Post button's label and the error line
+        compose.notice
+
+    provides:
+        ComposeOpens() via the Post tab
+        MediaPicked(files)
+        AltTextSaved(item) on blur
+        PostCreated() when can_post
+        Back()
+
+    contracts:
+        demands Backend
+        demands Shell                   -- media_upload is the one raw-body command
+        demands PixelfedApi
+
+    @guarantee NothingLeavesWithoutIntent
+        -- Bytes leave the device only for a file the person picked, to
+        -- the logged-in instance, once (BytesCrossOnce). Nothing is
+        -- uploaded on behalf of a draft, a paste or a drop.
+
+    @guidance
+        -- The file input is visually hidden inside a labelled drop-zone
+        -- look-alike; the label is the control, so it is keyboard
+        -- reachable. There is no cropping, filtering, reordering or
+        -- location tagging; pixelfed-rn's composer does all four and they
+        -- are NOT BUILT.
+}
+
+surface Profile {
+    facing viewer: Viewer
+
+    exposes:
+        profile.account as header: avatar, counts, names, lock, bio, website
+        profile.relationship as the follow button, absent when is_self
+        profile.posts as a three-wide grid of tiles
+        profile.posts_phase
+        profile.notice
+
+    provides:
+        ProfileOpens(id)
+        FollowToggled() when relationship != null and not is_self
+        ProfilePages() via Load more
+        RouteChanged(status_detail(id)) from a tile
+        Back()
+
+    contracts:
+        demands Backend
+        demands PixelfedApi
+
+    @guidance
+        -- The Me tab is this surface with the session's account id.
+        -- Followers and following lists are not built; they use Pixelfed's
+        -- cursor= pagination, a third scheme.
+}
+
+surface DevShell {
+    facing developer: Developer
+
+    exposes:
+        flake.nix devShells.default: purs, spago, purs-tidy, purs-backend-es,
+            purescript-language-server, esbuild, rust stable with rust-src and
+            rust-analyzer, cargo-tauri, pkg-config, gobject-introspection,
+            WebKitGTK 4.1 and GTK 3 and their libraries, glib-networking,
+            xdg-utils
+        flake.nix devShells.android: the same plus the Android SDK 34, NDK
+            26.1.10909125, JDK 17 and the four Android Rust targets (untested)
+        scripts/check.fish
+
+    provides:
+        nix develop
+        spago build, spago test, spago bundle
+        cargo tauri icon <png>   -- once; codegen needs icons/32x32.png
+        cargo tauri dev          -- runs beforeDevCommand, then the app
+        fish scripts/check.fish  -- the gate (D15)
+
+    @guarantee NoNodeModules
+        -- The repository has no package.json; esbuild comes from nixpkgs
+        -- and is driven by spago bundle.
+
+    @guidance
+        -- The shell exports XDG_DATA_DIRS with the GTK and gsettings
+        -- schemas, GIO_MODULE_DIR for glib-networking (WebKitGTK's TLS for
+        -- https images) and WEBKIT_DISABLE_DMABUF_RENDERER=1. The session
+        -- file lands in ~/.local/share/com.harryprayiv.pellucid/.
+}
+
+surface LabInstance {
+    facing developer: Developer
+
+    exposes:
+        lab.pixelfed.{enable, domain, acme.{email, dnsProvider, environmentFile}, envSecretFile, openFirewall}
+        a Pixelfed 0.12.9 at https://<domain>/ with open registration, no
+            email verification, mail to the journal, every ActivityPub switch
+            off, OAuth on, EXP_EMC on, the local timeline public
+
+    provides:
+        pixelfed-manage user:create --name --username --email --password --is_admin=1 --confirm_email=1
+        pixelfed-manage user:admin <username>
+        registration in a browser on the LAN for further test accounts
+
+    contracts:
+        demands Instance
+
+    @guarantee RealCertificate
+        -- Let's Encrypt by DNS-01, so the client's https-only rule (D5)
+        -- holds against the lab exactly as it does against
+        -- pixelfed.social. The host is never reachable from outside; only
+        -- the DNS record is public.
+
+    @guarantee Disposable
+        -- Removing the import and /var/lib/pixelfed (and the MySQL
+        -- database the module created) leaves nothing behind.
+
+    @guidance
+        -- Two sops secrets: APP_KEY=base64:<32 random bytes> for the
+        -- instance, and the DNS provider's token under lego's variable
+        -- names for the certificate. KnownIssue lab_instance_undeployed.
+}
+
+------------------------------------------------------------
+-- Deferred Specifications
+------------------------------------------------------------
+
+deferred OAuth2.authorization_code     -- see: RFC 6749 section 4.1; Pixelfed uses Laravel Passport
+deferred Mastodon.api                  -- see: https://docs.joinmastodon.org/methods/
+deferred Pixelfed.api                  -- see: app/Http/Controllers/Api/ApiV1Controller.php and routes/api.php in pixelfed/pixelfed
+deferred Pixelfed.entities             -- see: app/Transformer/Api/*.php and app/Services/StatusService.php
+deferred Tauri.config                  -- see: https://schema.tauri.app/config/2
+deferred Tauri.mobile                  -- see: cargo tauri android init, tauri-plugin-deep-link
+deferred Nixpkgs.pixelfed              -- see: nixos/modules/services/web-apps/pixelfed.nix
+deferred Acme.dns01                    -- see: https://go-acme.github.io/lego/dns/
+deferred Pellucid.server               -- see: a future spec; nothing here assumes it
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open question "Whether /api/v1/apps will ever issue a public client, which would let D19 drop the secret from the session file. Today it writes a secret into every client it creates and Passport demands it; a Pellucid server can decide otherwise."
+open question "Whether an uploaded item removed from the composer should be deleted on the server at once (KnownIssue orphan_uploads). Pixelfed's API has no documented DELETE /api/v1/media/{id}; its garbage collector removes unattached media after a delay, and a person who removes a file and picks it again would pay the upload twice either way."
+open question "Whether deleting a post should also remove it from the feed and grid the person returns to, or whether a reload is enough. Removing it needs a cross-screen signal (a Root-level event or a shared store); reloading costs one request and shows the truth."
+open question "Which secret store the Android shell uses: Android Keystore through a small Kotlin plugin, or tauri-plugin-stronghold with a key derived on device. The trait fixes the interface either way."
+open question "Whether the lab instance should federate at all. Off keeps it disposable and unreachable; on would let the client be tested against remote accounts and media proxying, which stock instances do constantly."
+open question "How hashtags and mentions in captions are linked: from the tags and mentions arrays by text matching, or by a small parser over content that extracts href targets and discards everything else. Both keep D6; the second handles the links Pixelfed inserts for URLs."
+open question "Whether the feeds should keep rendering the whole list or window it as nixtune-page does. Twenty posts a page with lazy images is fine for a phone until a session scrolls through hundreds; the point at which it stops being fine is unmeasured."
+open question "Whether the name Pellucid collides with a mark in app stores or in the fediverse client space. Nothing was found by hand; a proper check is before D18, not after."
+open question "Whether the trust model for the Tauri shell needs a second capability window (an isolation pattern) once the app renders content from many servers, or whether D6 plus the CSP is enough. The isolation pattern costs a second HTML file and a re-review of the IPC."

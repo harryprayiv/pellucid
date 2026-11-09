@@ -19,11 +19,18 @@ module Pixelfed.Entity
   , StatusRecord
   , Relationship
   , Context
+  , NotificationId(..)
+  , NotificationKind(..)
+  , Notification
+  , Tagged
+  , ComposeSettings
+  , NewPost
   , statusId
   , displayed
   , isAlbum
   , captionOf
   , firstMedia
+  , visibilityName
   ) where
 
 import Prelude
@@ -60,6 +67,16 @@ derive newtype instance Show MediaId
 data Visibility = Public | Unlisted | Private | Direct | Draft | OtherVisibility String
 
 derive instance Eq Visibility
+
+-- | The wire name, as accepted by `POST /api/v1/statuses`.
+visibilityName :: Visibility -> String
+visibilityName = case _ of
+  Public -> "public"
+  Unlisted -> "unlisted"
+  Private -> "private"
+  Direct -> "direct"
+  Draft -> "draft"
+  OtherVisibility other -> other
 
 -- | `pf_type` as set by `Status::setType()` on the server.
 data PfType
@@ -179,6 +196,65 @@ type Relationship =
 type Context =
   { ancestors :: Array Status
   , descendants :: Array Status
+  }
+
+newtype NotificationId = NotificationId String
+
+derive instance Newtype NotificationId _
+derive newtype instance Eq NotificationId
+derive newtype instance Ord NotificationId
+derive newtype instance Show NotificationId
+
+-- | `NotificationTransformer::replaceTypeVerb` output. Unknown verbs are kept.
+data NotificationKind
+  = NFollow
+  | NMention
+  | NShare
+  | NFavourite
+  | NComment
+  | NTagged
+  | NModlog
+  | NDirect
+  | NStoryReact
+  | NStoryComment
+  | NOther String
+
+derive instance Eq NotificationKind
+
+type Tagged = { username :: String, statusId :: StatusId }
+
+-- | One entry of `GET /api/v1/notifications`. `account` is the actor; it and
+-- | `status` are optional because the server drops entities it can no longer
+-- | load, and because a status that fails to decode must not take the whole
+-- | page with it.
+type Notification =
+  { id :: NotificationId
+  , kind :: NotificationKind
+  , createdAt :: String
+  , account :: Maybe Account
+  , status :: Maybe Status
+  , tagged :: Maybe Tagged
+  }
+
+-- | `GET /api/v1.1/compose/settings`. Sizes are kilobytes, as Laravel's
+-- | `max:` rule on uploads counts them.
+type ComposeSettings =
+  { allowedMediaTypes :: Array String
+  , maxCaptionLength :: Int
+  , maxFileSizeKb :: Int
+  , maxMediaAttachments :: Int
+  , maxAltTextLength :: Int
+  , defaultVisibility :: Maybe Visibility
+  }
+
+-- | What the composer sends to `POST /api/v1/statuses`.
+type NewPost =
+  { caption :: String
+  , mediaIds :: Array MediaId
+  , visibility :: Visibility
+  , sensitive :: Boolean
+  , spoilerText :: String
+  , commentsDisabled :: Boolean
   }
 
 statusId :: Status -> StatusId

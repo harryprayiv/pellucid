@@ -1,0 +1,10 @@
+{
+  "default_license": 1,
+  "media_descriptions": false,
+  "max_altext_length": 1000,
+  "allowed_media_types": "image/jpeg,image/png,image/gif,video/mp4",
+  "max_caption_length": 2000,
+  "max_file_size": 15000,
+  "max_media_attachments": 10,
+  "default_scope": "unlisted"
+}

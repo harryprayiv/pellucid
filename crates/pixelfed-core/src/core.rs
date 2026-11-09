@@ -4,11 +4,11 @@ use std::time::Duration;
 use serde::Deserialize;
 use url::Url;
 
-use crate::api::{self, ApiRequest, ApiResponse};
+use crate::api::{self, ApiRequest, ApiResponse, MediaUpload};
 use crate::domain::Domain;
 use crate::error::AppError;
 use crate::instance::{self, InstanceProbe};
-use crate::oauth::{self, LoopbackListener, RegisteredApp};
+use crate::oauth::{self, LoopbackListener, Pkce, RegisteredApp};
 use crate::session::{AccountRef, Session, SessionSummary};
 use crate::store::SecretStore;
 
@@ -35,6 +35,7 @@ pub struct PendingLogin {
     domain: Domain,
     app: RegisteredApp,
     state: String,
+    pkce: Pkce,
     listener: LoopbackListener,
     pub authorize_url: Url,
 }
@@ -88,11 +89,13 @@ impl Core {
         let listener = LoopbackListener::bind().await?;
         let app = oauth::register_app(&self.http, &domain, listener.redirect_uri()).await?;
         let state = uuid::Uuid::new_v4().simple().to_string();
-        let authorize_url = oauth::authorize_url(&domain, &app, &state);
+        let pkce = Pkce::generate()?;
+        let authorize_url = oauth::authorize_url(&domain, &app, &state, &pkce);
         Ok(PendingLogin {
             domain,
             app,
             state,
+            pkce,
             listener,
             authorize_url,
         })
@@ -106,7 +109,8 @@ impl Core {
             .listener
             .wait_for_code(&pending.state, LOGIN_TIMEOUT)
             .await?;
-        let token = oauth::exchange_code(&self.http, &pending.domain, &pending.app, &code).await?;
+        let token =
+            oauth::exchange_code(&self.http, &pending.domain, &pending.app, &code, &pending.pkce).await?;
 
         let mut session = Session {
             domain: pending.domain,
@@ -142,6 +146,12 @@ impl Core {
         let session = self.current()?;
         let url = api::follow_url(&session, raw_url)?;
         api::send(&self.http, &session, api::Method::Get, url, None).await
+    }
+
+    /// Uploads one media file; the answer is the MediaAttachment entity.
+    pub async fn media_upload(&self, upload: MediaUpload) -> Result<ApiResponse, AppError> {
+        let session = self.current()?;
+        api::upload(&self.http, &session, upload).await
     }
 }
 

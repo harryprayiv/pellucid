@@ -29,6 +29,7 @@ data Route
   = Home
   | Public
   | Notifications
+  | Compose
   | Profile AccountId
   | StatusDetail StatusId
 
@@ -40,6 +41,7 @@ routeCodec = root $ sum
   { "Home": noArgs
   , "Public": "public" / noArgs
   , "Notifications": "notifications" / noArgs
+  , "Compose": "compose" / noArgs
   , "Profile": "profile" / accountId segment
   , "StatusDetail": "status" / statusId segment
   }

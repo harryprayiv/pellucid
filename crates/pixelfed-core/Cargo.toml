@@ -1,18 +1,21 @@
 [package]
-name = "pellucid-core"
+name = "pixelfed-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Pellucid client core: OAuth, session storage and authenticated API transport. No UI, no webview."
+description = "Pixelfed client core: OAuth, session storage and authenticated API transport. No UI, no webview."
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 url.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "charset", "http2"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "charset", "http2", "multipart"] }
 tokio = { version = "1", features = ["net", "io-util", "time", "rt", "macros", "sync"] }
 uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

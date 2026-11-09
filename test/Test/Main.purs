@@ -1,6 +1,8 @@
--- | Decoder tests against a payload shaped like `StatusTransformer`,
+-- | Decoder tests against payloads shaped like the server's transformers,
 -- | including the lenient paths: string counters, null `content_text`, the
--- | empty `liked_by` form, a share wrapper and a sparse remote account.
+-- | empty `liked_by` form, a share wrapper, a sparse remote account, a
+-- | notification with an unknown verb and an unreadable status, compose
+-- | settings with a comma-joined type list, and a fresh upload with no url.
 module Test.Main (main) where
 
 import Prelude
@@ -15,8 +17,8 @@ import Data.Maybe (Maybe(..), isJust)
 import Effect (Effect)
 import Effect.Console (log)
 import Effect.Exception (throw)
-import Pixelfed.Decode (decodeContext, decodeRelationships, decodeStatuses)
-import Pixelfed.Entity (AccountId(..), MediaType(..), PfType(..), Status(..), StatusId(..), Visibility(..), displayed, statusId)
+import Pixelfed.Decode (decodeComposeSettings, decodeContext, decodeMedia, decodeNotifications, decodeRelationships, decodeStatuses)
+import Pixelfed.Entity (AccountId(..), MediaId(..), MediaType(..), NotificationId(..), NotificationKind(..), PfType(..), Status(..), StatusId(..), Visibility(..), displayed, statusId)
 import Data.Time.Duration (Milliseconds(..))
 import Util.Time (parseIso, relativeLabel)
 
@@ -25,6 +27,12 @@ foreign import fixture :: String
 foreign import relationshipFixture :: String
 
 foreign import contextFixture :: String
+
+foreign import notificationsFixture :: String
+
+foreign import composeSettingsFixture :: String
+
+foreign import mediaUploadFixture :: String
 
 main :: Effect Unit
 main = do
@@ -82,6 +90,46 @@ main = do
   check "comment text" (comment.contentText == Just "Lovely light")
   check "comment parent" (comment.inReplyToId == Just (StatusId "812345678901234567"))
   check "comment type" (comment.pfType == TextPost)
+
+  notifJson <- either' "notifications fixture is not JSON" (jsonParser notificationsFixture)
+  notifs <- either' "decodeNotifications" (lmap printJsonDecodeError (decodeNotifications notifJson))
+  check "six notifications" (Array.length notifs == 6)
+  like <- maybe' "like notification" (Array.index notifs 0)
+  check "like id" (like.id == NotificationId "9001")
+  check "like kind" (like.kind == NFavourite)
+  check "like actor" ((map _.acct like.account) == Just "dave@remote.example")
+  check "like status is the liked post" ((map statusId like.status) == Just (StatusId "812345678901234567"))
+  commentN <- maybe' "comment notification" (Array.index notifs 1)
+  check "comment kind" (commentN.kind == NComment)
+  check "comment status is the comment" ((map statusId commentN.status) == Just (StatusId "900000000000000001"))
+  followN <- maybe' "follow notification" (Array.index notifs 2)
+  check "follow kind" (followN.kind == NFollow)
+  check "follow has no status" (not (isJust followN.status))
+  shareN <- maybe' "share notification" (Array.index notifs 3)
+  check "share kind" (shareN.kind == NShare)
+  taggedN <- maybe' "tagged notification" (Array.index notifs 4)
+  check "tagged kind" (taggedN.kind == NTagged)
+  check "tagged status id" ((map _.statusId taggedN.tagged) == Just (StatusId "700000000000000001"))
+  other <- maybe' "unknown notification" (Array.index notifs 5)
+  check "unknown verb kept" (other.kind == NOther "poll:ended")
+  check "null actor is Nothing" (not (isJust other.account))
+  check "unreadable status is Nothing" (not (isJust other.status))
+
+  settingsJson <- either' "compose settings fixture is not JSON" (jsonParser composeSettingsFixture)
+  settings <- either' "decodeComposeSettings" (lmap printJsonDecodeError (decodeComposeSettings settingsJson))
+  check "comma-joined media types split" (settings.allowedMediaTypes == [ "image/jpeg", "image/png", "image/gif", "video/mp4" ])
+  check "caption limit" (settings.maxCaptionLength == 2000)
+  check "file size in KB" (settings.maxFileSizeKb == 15000)
+  check "attachment limit" (settings.maxMediaAttachments == 10)
+  check "alt text limit" (settings.maxAltTextLength == 1000)
+  check "default scope" (settings.defaultVisibility == Just Unlisted)
+
+  mediaJson <- either' "media upload fixture is not JSON" (jsonParser mediaUploadFixture)
+  uploaded <- either' "decodeMedia" (lmap printJsonDecodeError (decodeMedia mediaJson))
+  check "upload id" (uploaded.id == MediaId "555")
+  check "null url falls back to preview_url" (uploaded.url == "https://pixelfed.social/storage/m/_v2/7/abc/new.jpg?v=1762680000")
+  check "null meta gives no dims" (uploaded.dimensions == Nothing)
+  check "null description" (uploaded.description == Nothing)
 
   log "all decoder tests passed"
 

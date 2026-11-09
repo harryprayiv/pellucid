@@ -48,6 +48,21 @@ pub struct ApiResponse {
     pub prev: Option<String>,
 }
 
+/// One file for `POST /api/v2/media`. The bytes arrive from the webview as
+/// a raw IPC body; nothing here touches the filesystem.
+#[derive(Debug, Clone)]
+pub struct MediaUpload {
+    pub bytes: Vec<u8>,
+    pub filename: String,
+    pub mime: String,
+    pub description: Option<String>,
+}
+
+/// Largest upload the core will hand to the server. Pixelfed's own limit
+/// (`MAX_PHOTO_SIZE`, 15 MB by default) is enforced server-side; this only
+/// stops a runaway webview from pinning memory.
+pub const MAX_UPLOAD_BYTES: usize = 512 * 1024 * 1024;
+
 pub fn request_url(session: &Session, req: &ApiRequest) -> Result<Url, AppError> {
     if !req.path.starts_with("/api/") {
         return Err(AppError::protocol(format!(
@@ -95,7 +110,46 @@ pub async fn send(
     if let Some(json) = body {
         builder = builder.json(json);
     }
-    let response = builder.send().await?;
+    finish(builder.send().await?).await
+}
+
+/// `POST /api/v2/media` as multipart form data with the `file` part and an
+/// optional `description`. The answer is a MediaAttachment with `url` set to
+/// null and `preview_url` pointing at the stored file.
+pub async fn upload(
+    http: &reqwest::Client,
+    session: &Session,
+    upload: MediaUpload,
+) -> Result<ApiResponse, AppError> {
+    if upload.bytes.is_empty() {
+        return Err(AppError::protocol("refusing to upload an empty file"));
+    }
+    if upload.bytes.len() > MAX_UPLOAD_BYTES {
+        return Err(AppError::protocol(format!(
+            "file is larger than the {} MB the client will send",
+            MAX_UPLOAD_BYTES / (1024 * 1024)
+        )));
+    }
+    let part = reqwest::multipart::Part::bytes(upload.bytes)
+        .file_name(upload.filename)
+        .mime_str(&upload.mime)
+        .map_err(|e| AppError::protocol(format!("bad media type: {e}")))?;
+    let mut form = reqwest::multipart::Form::new().part("file", part);
+    if let Some(description) = upload.description.filter(|d| !d.trim().is_empty()) {
+        form = form.text("description", description);
+    }
+    let url = session.domain.base_url().join("api/v2/media")?;
+    let response = http
+        .post(url)
+        .bearer_auth(&session.access_token)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .multipart(form)
+        .send()
+        .await?;
+    finish(response).await
+}
+
+async fn finish(response: reqwest::Response) -> Result<ApiResponse, AppError> {
     let status = response.status();
     let links = response
         .headers()
@@ -126,7 +180,7 @@ pub async fn send(
     })
 }
 
-/// Pellucid error bodies are `{"error": "..."}` or `{"message": "..."}`.
+/// Pixelfed error bodies are `{"error": "..."}` or `{"message": "..."}`.
 fn error_message(text: &str) -> String {
     match serde_json::from_str::<Value>(text) {
         Ok(Value::Object(map)) => map
@@ -146,7 +200,7 @@ mod tests {
 
     fn session() -> Session {
         Session {
-            domain: Domain::parse("pellucid.social").unwrap(),
+            domain: Domain::parse("pixelfed.social").unwrap(),
             client_id: "1".into(),
             client_secret: "s".into(),
             access_token: "t".into(),
@@ -166,7 +220,7 @@ mod tests {
         let url = request_url(&session(), &req).unwrap();
         assert_eq!(
             url.as_str(),
-            "https://pellucid.social/api/v1/timelines/home?_pe=1&limit=20"
+            "https://pixelfed.social/api/v1/timelines/home?_pe=1&limit=20"
         );
     }
 
@@ -184,10 +238,35 @@ mod tests {
     #[test]
     fn follow_rejects_foreign_cursors() {
         let s = session();
-        assert!(follow_url(&s, "https://pellucid.social/api/v1/timelines/home?max_id=9").is_ok());
+        assert!(follow_url(&s, "https://pixelfed.social/api/v1/timelines/home?max_id=9").is_ok());
         assert!(follow_url(&s, "https://attacker.example/api/v1/timelines/home?max_id=9").is_err());
-        assert!(follow_url(&s, "https://pellucid.social/oauth/authorize").is_err());
+        assert!(follow_url(&s, "https://pixelfed.social/oauth/authorize").is_err());
         assert!(follow_url(&s, "not a url").is_err());
+    }
+
+    #[tokio::test]
+    async fn upload_refuses_empty_and_oversized_files_before_the_network() {
+        let http = reqwest::Client::new();
+        let empty = MediaUpload {
+            bytes: vec![],
+            filename: "a.jpg".into(),
+            mime: "image/jpeg".into(),
+            description: None,
+        };
+        assert!(matches!(
+            upload(&http, &session(), empty).await,
+            Err(AppError::Protocol { .. })
+        ));
+        let huge = MediaUpload {
+            bytes: vec![0u8; MAX_UPLOAD_BYTES + 1],
+            filename: "a.jpg".into(),
+            mime: "image/jpeg".into(),
+            description: None,
+        };
+        assert!(matches!(
+            upload(&http, &session(), huge).await,
+            Err(AppError::Protocol { .. })
+        ));
     }
 
     #[test]

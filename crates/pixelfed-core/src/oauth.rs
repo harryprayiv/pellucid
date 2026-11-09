@@ -1,6 +1,9 @@
 use std::time::Duration;
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use url::Url;
@@ -70,17 +73,52 @@ pub async fn register_app(
     })
 }
 
+/// RFC 7636 proof key. The verifier stays in Rust; only the S256 challenge
+/// goes to the browser. Pixelfed's Passport (league/oauth2-server 9) stores
+/// the challenge for confidential clients and then demands the verifier at
+/// the token endpoint, so a code intercepted on the redirect is useless on
+/// its own.
+#[derive(Debug, Clone)]
+pub struct Pkce {
+    verifier: String,
+    challenge: String,
+}
+
+impl Pkce {
+    pub fn generate() -> Result<Pkce, AppError> {
+        let mut bytes = [0u8; 32];
+        getrandom::fill(&mut bytes)
+            .map_err(|e| AppError::storage(format!("no randomness available: {e}")))?;
+        Ok(Pkce::from_verifier(URL_SAFE_NO_PAD.encode(bytes)))
+    }
+
+    pub fn from_verifier(verifier: String) -> Pkce {
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        Pkce { verifier, challenge }
+    }
+
+    pub fn verifier(&self) -> &str {
+        &self.verifier
+    }
+
+    pub fn challenge(&self) -> &str {
+        &self.challenge
+    }
+}
+
 /// The URL the system browser is sent to. `state` is checked when the
 /// redirect comes back so a stray request to the loopback port cannot
 /// complete someone else's login.
-pub fn authorize_url(domain: &Domain, app: &RegisteredApp, state: &str) -> Url {
+pub fn authorize_url(domain: &Domain, app: &RegisteredApp, state: &str, pkce: &Pkce) -> Url {
     let mut url = domain.base_url().join("oauth/authorize").expect("static path");
     url.query_pairs_mut()
         .append_pair("client_id", &app.client_id)
         .append_pair("redirect_uri", &app.redirect_uri)
         .append_pair("response_type", "code")
         .append_pair("scope", SCOPES)
-        .append_pair("state", state);
+        .append_pair("state", state)
+        .append_pair("code_challenge", pkce.challenge())
+        .append_pair("code_challenge_method", "S256");
     url
 }
 
@@ -98,6 +136,7 @@ pub async fn exchange_code(
     domain: &Domain,
     app: &RegisteredApp,
     code: &str,
+    pkce: &Pkce,
 ) -> Result<TokenResponse, AppError> {
     let url = domain.base_url().join("oauth/token")?;
     let response = http
@@ -109,6 +148,7 @@ pub async fn exchange_code(
             ("client_secret", app.client_secret.as_str()),
             ("redirect_uri", app.redirect_uri.as_str()),
             ("scope", SCOPES),
+            ("code_verifier", pkce.verifier()),
         ])
         .send()
         .await?;
@@ -268,6 +308,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pkce_matches_rfc_7636_appendix_b() {
+        let pkce = Pkce::from_verifier("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk".into());
+        assert_eq!(pkce.challenge(), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    }
+
+    #[test]
+    fn generated_verifiers_are_fresh_and_well_formed() {
+        let a = Pkce::generate().unwrap();
+        let b = Pkce::generate().unwrap();
+        assert_ne!(a.verifier(), b.verifier());
+        assert_eq!(a.verifier().len(), 43);
+        assert!(a
+            .verifier()
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+    }
+
+    #[test]
     fn authorize_url_carries_every_parameter() {
         let domain = Domain::parse("pixelfed.social").unwrap();
         let app = RegisteredApp {
@@ -275,7 +333,8 @@ mod tests {
             client_secret: "secret".into(),
             redirect_uri: "http://127.0.0.1:5555/callback".into(),
         };
-        let url = authorize_url(&domain, &app, "abc");
+        let pkce = Pkce::from_verifier("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk".into());
+        let url = authorize_url(&domain, &app, "abc", &pkce);
         assert_eq!(url.host_str(), Some("pixelfed.social"));
         assert_eq!(url.path(), "/oauth/authorize");
         let q: Vec<(String, String)> = url
@@ -286,7 +345,13 @@ mod tests {
         assert!(q.contains(&("response_type".into(), "code".into())));
         assert!(q.contains(&("scope".into(), SCOPES.into())));
         assert!(q.contains(&("state".into(), "abc".into())));
+        assert!(q.contains(&(
+            "code_challenge".into(),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".into()
+        )));
+        assert!(q.contains(&("code_challenge_method".into(), "S256".into())));
         assert!(!url.as_str().contains("secret"));
+        assert!(!url.as_str().contains(pkce.verifier()));
     }
 
     #[test]

@@ -21,22 +21,29 @@ module Pixelfed.Client
   , getRelationship
   , follow
   , unfollow
+  , notifications
+  , followNotifications
+  , composeSettings
+  , uploadMedia
+  , updateMediaDescription
+  , createPost
   ) where
 
 import Prelude
 
-import App.Backend (AppError(..), ApiResponse, Backend, Cursor, Method(..))
-import Data.Argonaut.Core (Json, fromObject, fromString, jsonFalse)
+import App.Backend (AppError(..), ApiResponse, Backend, Cursor, MediaUpload, Method(..))
+import Data.Argonaut.Core (Json, fromArray, fromBoolean, fromObject, fromString, jsonFalse)
 import Data.Argonaut.Decode (JsonDecodeError, printJsonDecodeError)
 import Data.Array as Array
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
+import Data.String (trim)
 import Data.Tuple (Tuple(..))
 import Effect.Aff (Aff)
 import Foreign.Object as Object
-import Pixelfed.Decode (decodeAccount, decodeContext, decodeRelationship, decodeRelationships, decodeStatus, decodeStatuses)
-import Pixelfed.Entity (Account, AccountId, Context, Relationship, Status, StatusId)
+import Pixelfed.Decode (decodeAccount, decodeComposeSettings, decodeContext, decodeMedia, decodeNotifications, decodeRelationship, decodeRelationships, decodeStatus, decodeStatuses)
+import Pixelfed.Entity (Account, AccountId, ComposeSettings, Context, MediaAttachment, MediaId, NewPost, Notification, Relationship, Status, StatusId, visibilityName)
 
 -- | One page of a cursor-paginated list. `next` goes further into the past.
 type Page a =
@@ -70,6 +77,56 @@ publicTimeline backend =
 -- | Follows a `next` or `prev` cursor from an earlier page of statuses.
 followPage :: Backend -> Cursor -> Aff (Either AppError (Page Status))
 followPage backend cursor = decodePage decodeStatuses <$> backend.apiFollow cursor
+
+-- | GET /api/v1/notifications?_pe=1&limit=20. Paginated by the Link header;
+-- | the server caps `limit` at 40.
+notifications :: Backend -> Aff (Either AppError (Page Notification))
+notifications backend =
+  decodePage decodeNotifications <$> backend.apiRequest
+    { method: GET, path: "/api/v1/notifications", query: [ pixelfedEntity, pageSize ], body: Nothing }
+
+followNotifications :: Backend -> Cursor -> Aff (Either AppError (Page Notification))
+followNotifications backend cursor = decodePage decodeNotifications <$> backend.apiFollow cursor
+
+-- | GET /api/v1.1/compose/settings: the instance's upload limits.
+composeSettings :: Backend -> Aff (Either AppError ComposeSettings)
+composeSettings backend =
+  decodeBody decodeComposeSettings <$> backend.apiRequest
+    { method: GET, path: "/api/v1.1/compose/settings", query: [], body: Nothing }
+
+-- | POST /api/v2/media (multipart, done in Rust); answers with the attachment.
+uploadMedia :: Backend -> MediaUpload -> Aff (Either AppError MediaAttachment)
+uploadMedia backend upload = decodeBody decodeMedia <$> backend.mediaUpload upload
+
+-- | PUT /api/v1/media/{id} with `description`; answers with the attachment.
+updateMediaDescription :: Backend -> MediaId -> String -> Aff (Either AppError MediaAttachment)
+updateMediaDescription backend id description =
+  decodeBody decodeMedia <$> backend.apiRequest
+    { method: PUT
+    , path: "/api/v1/media/" <> unwrap id
+    , query: []
+    , body: Just $ fromObject $ Object.fromFoldable [ Tuple "description" (fromString description) ]
+    }
+
+-- | POST /api/v1/statuses?_pe=1 with media. The server refuses a post with
+-- | neither media nor `in_reply_to_id`, so the caller must have uploaded first.
+createPost :: Backend -> NewPost -> Aff (Either AppError Status)
+createPost backend post =
+  decodeBody decodeStatus <$> backend.apiRequest
+    { method: POST
+    , path: "/api/v1/statuses"
+    , query: [ pixelfedEntity ]
+    , body: Just $ fromObject $ Object.fromFoldable $
+        [ Tuple "status" (fromString post.caption)
+        , Tuple "media_ids" (fromArray (map (fromString <<< unwrap) post.mediaIds))
+        , Tuple "visibility" (fromString (visibilityName post.visibility))
+        , Tuple "sensitive" (fromBoolean post.sensitive)
+        , Tuple "comments_disabled" (fromBoolean post.commentsDisabled)
+        ]
+          <>
+            if trim post.spoilerText == "" then []
+            else [ Tuple "spoiler_text" (fromString (trim post.spoilerText)) ]
+    }
 
 -- | POST /api/v1/statuses/{id}/favourite?_pe=1, returns the updated status.
 favourite :: Backend -> StatusId -> Aff (Either AppError Status)

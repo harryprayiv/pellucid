@@ -7,8 +7,10 @@ import Prelude
 import App.Backend (SessionSummary, printAppError)
 import App.Monad (Env)
 import App.Route (Route(..), navigate, parseRoute)
+import Component.Compose as Compose
 import Component.Feed as Feed
 import Component.Login as Login
+import Component.Notifications as Notifications
 import Component.Profile as Profile
 import Component.StatusDetail as StatusDetail
 import Control.Monad.Reader (class MonadAsk, asks)
@@ -44,12 +46,16 @@ data Action
 type Slots =
   ( login :: forall q. H.Slot q Void Unit
   , feed :: forall q. H.Slot q Void Unit
+  , notifications :: forall q. H.Slot q Void Unit
+  , compose :: forall q. H.Slot q Void Unit
   , detail :: forall q. H.Slot q Void Unit
   , profile :: forall q. H.Slot q Void Unit
   )
 
 _login = Proxy :: Proxy "login"
 _feed = Proxy :: Proxy "feed"
+_notifications = Proxy :: Proxy "notifications"
+_compose = Proxy :: Proxy "compose"
 _detail = Proxy :: Proxy "detail"
 _profile = Proxy :: Proxy "profile"
 
@@ -74,6 +80,7 @@ render state = case state.phase of
         , HH.nav [ cls "tabbar" ]
             [ tab state.route Home "\x2302" "Home"
             , tab state.route Public "\x1F310" "Public"
+            , tab state.route Compose "\x2795" "Post"
             , tab state.route Notifications "\x1F514" "Alerts"
             , case me of
                 Just id -> tab state.route (Profile id) "\x1F464" "Me"
@@ -96,16 +103,10 @@ screen :: forall m. MonadAff m => MonadAsk Env m => Maybe AccountId -> Route -> 
 screen me = case _ of
   Home -> HH.slot_ _feed unit Feed.component Feed.HomeFeed
   Public -> HH.slot_ _feed unit Feed.component Feed.PublicFeed
-  Notifications -> notPorted "Notifications"
+  Notifications -> HH.slot_ _notifications unit Notifications.component unit
+  Compose -> HH.slot_ _compose unit Compose.component unit
   Profile id -> HH.slot_ _profile unit Profile.component { id, me }
   StatusDetail id -> HH.slot_ _detail unit StatusDetail.component { id, me }
-
-notPorted :: forall m. String -> H.ComponentHTML Action Slots m
-notPorted what =
-  HH.section [ cls "placeholder" ]
-    [ HH.h1_ [ HH.text what ]
-    , HH.p [ cls "muted" ] [ HH.text "This screen has not been ported yet." ]
-    ]
 
 handleAction :: forall o m. MonadAff m => MonadAsk Env m => Action -> H.HalogenM State Action Slots o m Unit
 handleAction = case _ of

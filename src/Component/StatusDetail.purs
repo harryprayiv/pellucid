@@ -1,5 +1,6 @@
 -- | One post with its comments and a reply box. Comments are the context
 -- | endpoint's descendants, shown flat in the order the server gives them.
+-- | The viewer's own post can be deleted from here, after a second tap.
 module Component.StatusDetail
   ( Input
   , component
@@ -41,6 +42,9 @@ data Loadable a = Pending | Missing AppError | Ready a
 
 type Reply = { text :: String, sending :: Boolean, error :: Maybe String }
 
+-- | Deleting the post takes two taps: the first arms, the second sends.
+data Deletion = NotArmed | Armed | Deleting
+
 type State =
   { input :: Input
   , main :: Loadable Status
@@ -49,6 +53,7 @@ type State =
   , revealed :: Set StatusId
   , busy :: Set StatusId
   , reply :: Reply
+  , deletion :: Deletion
   , notice :: Maybe String
   }
 
@@ -61,6 +66,9 @@ data Action
   | SetReply String
   | SubmitReply Event
   | DeleteComment StatusId
+  | ArmDelete
+  | CancelDelete
+  | ConfirmDelete
   | DismissNotice
 
 component :: forall q o m. MonadAff m => MonadAsk Env m => H.Component q Input o m
@@ -83,13 +91,18 @@ initialState input =
   , revealed: Set.empty
   , busy: Set.empty
   , reply: { text: "", sending: false, error: Nothing }
+  , deletion: NotArmed
   , notice: Nothing
   }
 
 render :: forall m. State -> H.ComponentHTML Action () m
 render state =
   HH.section [ cls "detail" ]
-    [ screenHeader Back "Post" [ iconButton "ghost" "Reload" "\x21BB" Reload ]
+    [ screenHeader Back "Post"
+        [ if isMine state then iconButton "ghost" "Delete post" "\x1F5D1" ArmDelete else HH.text ""
+        , iconButton "ghost" "Reload" "\x21BB" Reload
+        ]
+    , deletePrompt state
     , case state.notice of
         Nothing -> HH.text ""
         Just text ->
@@ -128,6 +141,27 @@ render state =
                   ]
               ]
     ]
+
+-- | True when the main post (the displayed one, for a share) is the viewer's.
+isMine :: State -> Boolean
+isMine state = case state.main of
+  Ready st ->
+    let
+      Status shown = displayed st
+    in
+      state.input.me == Just shown.account.id
+  _ -> false
+
+deletePrompt :: forall m. State -> H.ComponentHTML Action () m
+deletePrompt state = case state.deletion of
+  NotArmed -> HH.text ""
+  Armed ->
+    HH.div [ cls "confirm" ]
+      [ HH.span_ [ HH.text "Delete this post? This cannot be undone." ]
+      , HH.button [ cls "confirm-yes", HP.type_ HP.ButtonButton, HE.onClick \_ -> ConfirmDelete ] [ HH.text "Delete" ]
+      , HH.button [ cls "ghost", HP.type_ HP.ButtonButton, HE.onClick \_ -> CancelDelete ] [ HH.text "Keep" ]
+      ]
+  Deleting -> HH.div [ cls "confirm" ] [ HH.span_ [ HH.text "Deleting\x2026" ] ]
 
 commentRow :: forall m. State -> Status -> H.ComponentHTML Action () m
 commentRow state comment =
@@ -200,7 +234,7 @@ handleAction = case _ of
       load
 
   Reload -> do
-    H.modify_ _ { main = Pending, comments = Pending, notice = Nothing }
+    H.modify_ _ { main = Pending, comments = Pending, deletion = NotArmed, notice = Nothing }
     load
 
   Back -> liftEffect goBack
@@ -236,6 +270,29 @@ handleAction = case _ of
             , main = adjustReplies 1 s.main
             }
       _ -> pure unit
+
+  ArmDelete -> do
+    state <- H.get
+    when (isMine state) case state.deletion of
+      NotArmed -> H.modify_ _ { deletion = Armed }
+      _ -> pure unit
+
+  CancelDelete -> H.modify_ \s -> case s.deletion of
+    Armed -> s { deletion = NotArmed }
+    _ -> s
+
+  ConfirmDelete -> do
+    state <- H.get
+    case state.main, state.deletion of
+      Ready main, Armed | isMine state -> do
+        backend <- asks _.backend
+        H.modify_ _ { deletion = Deleting }
+        result <- liftAff (deleteStatus backend (statusId (displayed main)))
+        case result of
+          Left err -> H.modify_ _ { deletion = NotArmed, notice = Just (printAppError err) }
+          -- The post is gone; the screen that showed it has nothing left to show.
+          Right _ -> liftEffect goBack
+      _, _ -> pure unit
 
   DeleteComment id -> do
     state <- H.get
