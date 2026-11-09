@@ -18,6 +18,7 @@ import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
+import View.Common (cls)
 import Web.Event.Event (Event, preventDefault)
 
 type State = { domain :: String, phase :: Phase }
@@ -45,8 +46,8 @@ component = H.mkComponent
 render :: forall m. State -> H.ComponentHTML Action () m
 render state =
   HH.section [ cls "login" ]
-    [ HH.h1_ [ HH.text "pellucid-ps" ]
-    , HH.p [ cls "muted" ] [ HH.text "Sign in to a Pellucid server." ]
+    [ HH.h1_ [ HH.text "Pellucid" ]
+    , HH.p [ cls "muted" ] [ HH.text "Sign in to a Pixelfed server." ]
     , case state.phase of
         Waiting started ->
           HH.div [ cls "login-waiting" ]
@@ -62,7 +63,7 @@ render state =
             , HH.input
                 [ HP.id "domain"
                 , HP.type_ HP.InputText
-                , HP.placeholder "pellucid.social"
+                , HP.placeholder "pixelfed.social"
                 , HP.value state.domain
                 , HP.autocomplete HP.AutocompleteOff
                 , HP.autofocus true
@@ -108,6 +109,3 @@ handleAction = case _ of
   LoginFailed err -> H.modify_ _ { phase = Failed err }
 
   Reset -> H.modify_ _ { phase = Entering }
-
-cls :: forall r i. String -> HP.IProp (class :: String | r) i
-cls = HP.class_ <<< HH.ClassName

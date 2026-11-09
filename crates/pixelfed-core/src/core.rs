@@ -13,7 +13,7 @@ use crate::session::{AccountRef, Session, SessionSummary};
 use crate::store::SecretStore;
 
 pub const USER_AGENT: &str = concat!(
-    "pellucid-ps/",
+    "Pellucid/",
     env!("CARGO_PKG_VERSION"),
     " (+https://harryprayiv.com)"
 );
@@ -124,7 +124,7 @@ impl Core {
         Ok(summary)
     }
 
-    /// Forgets the session locally. Pellucid's token stays valid server-side
+    /// Forgets the session locally. Pixelfed's token stays valid server-side
     /// until it expires; revoking it is a later step.
     pub fn logout(&self) -> Result<(), AppError> {
         self.store.clear()?;

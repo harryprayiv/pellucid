@@ -15,12 +15,16 @@ import Data.Maybe (Maybe(..), isJust)
 import Effect (Effect)
 import Effect.Console (log)
 import Effect.Exception (throw)
-import Pellucid.Decode (decodeStatuses)
-import Pellucid.Entity (MediaType(..), PfType(..), Status(..), StatusId(..), Visibility(..), displayed, statusId)
+import Pixelfed.Decode (decodeContext, decodeRelationships, decodeStatuses)
+import Pixelfed.Entity (AccountId(..), MediaType(..), PfType(..), Status(..), StatusId(..), Visibility(..), displayed, statusId)
 import Data.Time.Duration (Milliseconds(..))
 import Util.Time (parseIso, relativeLabel)
 
 foreign import fixture :: String
+
+foreign import relationshipFixture :: String
+
+foreign import contextFixture :: String
 
 main :: Effect Unit
 main = do
@@ -63,6 +67,21 @@ main = do
   t1 <- maybe' "instant" (instant (Milliseconds (1_000_000_000.0 + 3.0 * 3600.0 * 1000.0)))
   check "relative hours" (relativeLabel t1 t0 == "3h")
   check "relative now" (relativeLabel t0 t0 == "now")
+
+  relJson <- either' "relationship fixture is not JSON" (jsonParser relationshipFixture)
+  rels <- either' "decodeRelationships" (lmap printJsonDecodeError (decodeRelationships relJson))
+  rel <- maybe' "relationship" (Array.head rels)
+  check "relationship id" (rel.id == AccountId "7")
+  check "relationship following" (rel.following && not rel.followedBy && not rel.requested)
+
+  ctxJson <- either' "context fixture is not JSON" (jsonParser contextFixture)
+  ctx <- either' "decodeContext" (lmap printJsonDecodeError (decodeContext ctxJson))
+  check "no ancestors" (Array.null ctx.ancestors)
+  check "one descendant" (Array.length ctx.descendants == 1)
+  Status comment <- maybe' "comment" (Array.head ctx.descendants)
+  check "comment text" (comment.contentText == Just "Lovely light")
+  check "comment parent" (comment.inReplyToId == Just (StatusId "812345678901234567"))
+  check "comment type" (comment.pfType == TextPost)
 
   log "all decoder tests passed"
 

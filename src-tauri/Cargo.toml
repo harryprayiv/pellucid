@@ -1,19 +1,19 @@
 [package]
-name = "pellucid-ps-app"
+name = "pellucid"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Tauri shell for pellucid-ps: wires the PureScript UI to pellucid-core."
+description = "Pellucid: Tauri shell wiring the PureScript UI to pixelfed-core."
 
 [lib]
-name = "pellucid_ps_app_lib"
+name = "pellucid_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-pellucid-core = { path = "../crates/pellucid-core" }
+pixelfed-core = { path = "../crates/pixelfed-core" }
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }

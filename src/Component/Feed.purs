@@ -25,8 +25,11 @@ import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
-import Pellucid.Client (Page, favourite, followPage, homeTimeline, publicTimeline, unbookmark, unfavourite, bookmark)
-import Pellucid.Entity (Status(..), StatusId, displayed, statusId)
+import Pixelfed.Client (Page, followPage, homeTimeline, publicTimeline)
+import Pixelfed.Entity (Status, StatusId, displayed, statusId)
+import Pixelfed.StatusOps (Toggle)
+import Pixelfed.StatusOps as Ops
+import View.Common (cls, iconButton)
 import View.StatusCard (CardAction(..), statusCard)
 
 data Kind = HomeFeed | PublicFeed
@@ -82,16 +85,14 @@ render state =
   HH.section [ cls "feed" ]
     [ HH.header [ cls "feed-header" ]
         [ HH.h1_ [ HH.text (title state.kind) ]
-        , HH.button
-            [ cls "ghost", HP.type_ HP.ButtonButton, HP.title "Refresh", HE.onClick \_ -> Refresh ]
-            [ HH.text "\x21BB" ]
+        , iconButton "ghost" "Refresh" "\x21BB" Refresh
         ]
     , case state.notice of
         Nothing -> HH.text ""
         Just text ->
           HH.div [ cls "notice" ]
             [ HH.span_ [ HH.text text ]
-            , HH.button [ cls "ghost", HP.type_ HP.ButtonButton, HE.onClick \_ -> DismissNotice ] [ HH.text "\x2715" ]
+            , iconButton "ghost" "Dismiss" "\x2715" DismissNotice
             ]
     , case state.feed of
         Loading -> HH.p [ cls "status-line" ] [ HH.text "Loading\x2026" ]
@@ -114,7 +115,11 @@ card state status =
     id = statusId (displayed status)
   in
     statusCard
-      { now: state.now, revealed: Set.member id state.revealed, busy: Set.member id state.busy }
+      { now: state.now
+      , revealed: Set.member id state.revealed
+      , busy: Set.member id state.busy
+      , commentsOpenDetail: true
+      }
       (Card id)
       status
 
@@ -156,14 +161,8 @@ handleAction = case _ of
     Reveal -> H.modify_ \s -> s { revealed = Set.insert id s.revealed }
     OpenAccount accountId -> liftEffect (navigate (Profile accountId))
     OpenStatus sid -> liftEffect (navigate (StatusDetail sid))
-    -- The favourite endpoints honour `_pe=1` and return the full Pellucid
-    -- entity, so the server's copy replaces ours.
-    ToggleFavourite -> withStatus id (\_ fromServer -> fromServer) \(Status s) ->
-      if s.favourited then unfavourite else favourite
-    -- The bookmark endpoints always return the Mastodon entity, which lacks
-    -- `pf_type`, `content_text` and `liked_by`; only the flag is taken from it.
-    ToggleBookmark -> withStatus id (\(Status old) (Status fromServer) -> Status old { bookmarked = fromServer.bookmarked }) \(Status s) ->
-      if s.bookmarked then unbookmark else bookmark
+    ToggleFavourite -> toggle id Ops.ToggleFavourite
+    ToggleBookmark -> toggle id Ops.ToggleBookmark
 
 load :: forall o m. MonadAff m => MonadAsk Env m => H.HalogenM State Action () o m Unit
 load = do
@@ -211,18 +210,10 @@ loadMore page cursor = do
               }
     }
 
--- | Runs a status action (like, bookmark) against the displayed status with
--- | the given id, marking it busy meanwhile. `merge old fromServer` decides
--- | what is stored back into the feed.
-withStatus
-  :: forall o m
-   . MonadAff m
-  => MonadAsk Env m
-  => StatusId
-  -> (Status -> Status -> Status)
-  -> (Status -> Backend -> StatusId -> Aff (Either AppError Status))
-  -> H.HalogenM State Action () o m Unit
-withStatus id merge pick = do
+-- | Flips a like or bookmark on the displayed status with the given id,
+-- | marking it busy meanwhile and merging the server's answer back.
+toggle :: forall o m. MonadAff m => MonadAsk Env m => StatusId -> Toggle -> H.HalogenM State Action () o m Unit
+toggle id which = do
   state <- H.get
   case state.feed of
     Loaded page | not (Set.member id state.busy) ->
@@ -231,7 +222,7 @@ withStatus id merge pick = do
         Just target -> do
           backend <- asks _.backend
           H.modify_ \s -> s { busy = Set.insert id s.busy }
-          result <- liftAff (pick (displayed target) backend id)
+          result <- liftAff (Ops.request which (displayed target) backend id)
           H.modify_ \s -> s
             { busy = Set.delete id s.busy
             , notice = case result of
@@ -239,19 +230,7 @@ withStatus id merge pick = do
                 Right _ -> s.notice
             , feed = case result, s.feed of
                 Right fromServer, Loaded p ->
-                  Loaded p { statuses = map (replaceDisplayed id (merge (displayed target) fromServer)) p.statuses }
+                  Loaded p { statuses = Ops.replaceAll id (Ops.merge which (displayed target) fromServer) p.statuses }
                 _, feed -> feed
             }
     _ -> pure unit
-
--- | Replaces the status with `id` whether it sits at the top level or inside
--- | a share wrapper.
-replaceDisplayed :: StatusId -> Status -> Status -> Status
-replaceDisplayed id updated st@(Status top)
-  | top.id == id = updated
-  | otherwise = case top.reblog of
-      Just inner | statusId inner == id -> Status top { reblog = Just updated }
-      _ -> st
-
-cls :: forall r i. String -> HP.IProp (class :: String | r) i
-cls = HP.class_ <<< HH.ClassName

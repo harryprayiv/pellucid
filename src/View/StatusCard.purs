@@ -1,9 +1,10 @@
--- | Renders one status in the feed. A plain render function rather than a
--- | component: cards have no state of their own, the feed owns it.
+-- | Renders one status in a feed. A plain render function rather than a
+-- | component: cards have no state of their own, the screen owns it.
 module View.StatusCard
   ( CardAction(..)
   , CardContext
   , statusCard
+  , mediaBlock
   ) where
 
 import Prelude
@@ -12,14 +13,11 @@ import Data.Array as Array
 import Data.DateTime.Instant (Instant)
 import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.String (null, trim)
-import Data.String.Regex (replace)
-import Data.String.Regex.Flags (global)
-import Data.String.Regex.Unsafe (unsafeRegex)
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
-import Pellucid.Entity (AccountId, MediaAttachment, MediaType(..), Status(..), StatusId, displayed)
-import Util.Time (parseIso, relativeLabel)
+import Pixelfed.Entity (AccountId, MediaAttachment, MediaType(..), Status(..), StatusId, captionOf, displayed)
+import View.Common (agoLabel, avatar, cls, handleName, lazy)
 
 data CardAction
   = ToggleFavourite
@@ -32,6 +30,8 @@ type CardContext =
   { now :: Maybe Instant
   , revealed :: Boolean
   , busy :: Boolean
+  -- | False on the post's own detail screen, where the comments are below.
+  , commentsOpenDetail :: Boolean
   }
 
 statusCard :: forall w i. CardContext -> (CardAction -> i) -> Status -> HH.HTML w i
@@ -42,24 +42,24 @@ statusCard ctx emit outer =
     boostedBy = case top.reblog of
       Just _ -> Just top.account
       Nothing -> Nothing
-    caption = captionText shown.contentText shown.content
+    caption = captionOf shown
     showMedia = not shown.sensitive || ctx.revealed
   in
     HH.article [ cls "card" ]
       [ case boostedBy of
-          Just booster -> HH.div [ cls "card-boost" ] [ HH.text (handle booster.displayName booster.acct <> " boosted") ]
+          Just booster -> HH.div [ cls "card-boost" ] [ HH.text (handleName booster.displayName booster.acct <> " boosted") ]
           Nothing -> HH.text ""
       , HH.header [ cls "card-header" ]
           [ HH.button
               [ cls "avatar-button", HP.type_ HP.ButtonButton, HE.onClick \_ -> emit (OpenAccount shown.account.id) ]
-              [ HH.img [ cls "avatar", HP.src shown.account.avatar, HP.alt "", lazy ] ]
+              [ avatar "avatar" shown.account.avatar ]
           , HH.div [ cls "card-names" ]
               [ HH.button
                   [ cls "name-button", HP.type_ HP.ButtonButton, HE.onClick \_ -> emit (OpenAccount shown.account.id) ]
-                  [ HH.strong_ [ HH.text (handle shown.account.displayName shown.account.acct) ] ]
+                  [ HH.strong_ [ HH.text (handleName shown.account.displayName shown.account.acct) ] ]
               , HH.span [ cls "acct" ] [ HH.text ("@" <> shown.account.acct) ]
               ]
-          , HH.span [ cls "card-time", HP.title shown.createdAt ] [ HH.text (ago ctx.now shown.createdAt) ]
+          , HH.span [ cls "card-time", HP.title shown.createdAt ] [ HH.text (agoLabel ctx.now shown.createdAt) ]
           ]
       , if Array.null shown.mediaAttachments then HH.text ""
         else if showMedia then mediaBlock shown.mediaAttachments
@@ -77,6 +77,7 @@ statusCard ctx emit outer =
               [ cls "action"
               , HP.type_ HP.ButtonButton
               , HP.title "Comments"
+              , HP.disabled (not ctx.commentsOpenDetail)
               , HE.onClick \_ -> emit (OpenStatus shown.id)
               ]
               [ HH.text "\x1F4AC", count shown.replyCount ]
@@ -138,36 +139,3 @@ count :: forall w i. Int -> HH.HTML w i
 count n
   | n <= 0 = HH.text ""
   | otherwise = HH.span [ cls "count" ] [ HH.text (" " <> show n) ]
-
-handle :: String -> String -> String
-handle displayName acct = if null (trim displayName) then acct else displayName
-
-ago :: Maybe Instant -> String -> String
-ago now createdAt = case now, parseIso createdAt of
-  Just n, Just t -> relativeLabel n t
-  _, _ -> ""
-
--- | Pellucid's `content_text` is the plain caption. Without it (an older
--- | server, or an entity that came without `_pe=1`) the HTML `content` is
--- | reduced to text. This is a display fallback, never an HTML renderer.
-captionText :: Maybe String -> String -> String
-captionText contentText content = trim case contentText of
-  Just t -> t
-  Nothing -> stripTags content
-
-stripTags :: String -> String
-stripTags =
-  replace (unsafeRegex "<br\\s*/?>" global) "\n"
-    >>> replace (unsafeRegex "</p>\\s*<p>" global) "\n\n"
-    >>> replace (unsafeRegex "<[^>]*>" global) ""
-    >>> replace (unsafeRegex "&amp;" global) "&"
-    >>> replace (unsafeRegex "&lt;" global) "<"
-    >>> replace (unsafeRegex "&gt;" global) ">"
-    >>> replace (unsafeRegex "&quot;" global) "\""
-    >>> replace (unsafeRegex "&#39;" global) "'"
-
-cls :: forall r i. String -> HP.IProp (class :: String | r) i
-cls = HP.class_ <<< HH.ClassName
-
-lazy :: forall r i. HP.IProp r i
-lazy = HP.attr (HH.AttrName "loading") "lazy"

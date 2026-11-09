@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "pellucid-ps",
+  "productName": "pellucid",
   "version": "0.1.0",
-  "identifier": "com.harryprayiv.pellucidps",
+  "identifier": "com.harryprayiv.pellucid",
   "build": {
     "frontendDist": "../dist",
     "beforeDevCommand": {
@@ -15,7 +15,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "pellucid-ps",
+        "title": "Pellucid",
         "label": "main",
         "width": 480,
         "height": 900,

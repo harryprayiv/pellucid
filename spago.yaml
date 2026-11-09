@@ -1,5 +1,5 @@
 package:
-  name: pellucid-ps
+  name: pellucid
   dependencies:
     - aff
     - aff-promise
@@ -20,6 +20,7 @@ package:
     - newtype
     - now
     - ordered-collections
+    - parallel
     - prelude
     - routing
     - routing-duplex

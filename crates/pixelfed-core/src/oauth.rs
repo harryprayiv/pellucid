@@ -8,16 +8,16 @@ use url::Url;
 use crate::domain::Domain;
 use crate::error::AppError;
 
-/// Scopes pellucid-rn asks for by default. Admin scopes are deliberately not
+/// Scopes pixelfed-rn asks for by default. Admin scopes are deliberately not
 /// requested; the moderation screens are a separate port.
 pub const SCOPES: &str = "read write follow push";
 
 /// Shown to the user on the instance's consent page.
-pub const CLIENT_NAME: &str = "pellucid-ps";
+pub const CLIENT_NAME: &str = "Pellucid";
 pub const CLIENT_WEBSITE: &str = "https://harryprayiv.com";
 
-/// Result of `POST /api/v1/apps`. Pellucid issues a fresh client per login,
-/// exactly like pellucid-rn does.
+/// Result of `POST /api/v1/apps`. Pixelfed issues a fresh client per login,
+/// exactly like pixelfed-rn does.
 #[derive(Debug, Clone)]
 pub struct RegisteredApp {
     pub client_id: String,
@@ -269,14 +269,14 @@ mod tests {
 
     #[test]
     fn authorize_url_carries_every_parameter() {
-        let domain = Domain::parse("pellucid.social").unwrap();
+        let domain = Domain::parse("pixelfed.social").unwrap();
         let app = RegisteredApp {
             client_id: "42".into(),
             client_secret: "secret".into(),
             redirect_uri: "http://127.0.0.1:5555/callback".into(),
         };
         let url = authorize_url(&domain, &app, "abc");
-        assert_eq!(url.host_str(), Some("pellucid.social"));
+        assert_eq!(url.host_str(), Some("pixelfed.social"));
         assert_eq!(url.path(), "/oauth/authorize");
         let q: Vec<(String, String)> = url
             .query_pairs()

@@ -1,26 +1,29 @@
--- | Hash routes. The set mirrors pellucid-rn's top-level screens; only `Home`
--- | and `Public` have components so far, the rest render a placeholder.
+-- | Hash routes. The set mirrors pixelfed-rn's top-level screens.
 module App.Route
   ( Route(..)
   , routeCodec
   , printRoute
   , parseRoute
   , navigate
+  , goBack
   ) where
 
-import Prelude
+import Prelude hiding ((/))
 
 import Data.Either (Either(..), hush)
 import Data.Generic.Rep (class Generic)
 import Data.Maybe (Maybe)
 import Data.Newtype (unwrap)
 import Effect (Effect)
-import Pellucid.Entity (AccountId(..), StatusId(..))
+import Pixelfed.Entity (AccountId(..), StatusId(..))
 import Routing.Duplex (RouteDuplex', as, root, segment)
 import Routing.Duplex as RD
 import Routing.Duplex.Generic (noArgs, sum)
 import Routing.Duplex.Generic.Syntax ((/))
 import Routing.Hash (setHash)
+import Web.HTML (window)
+import Web.HTML.History (back)
+import Web.HTML.Window (history)
 
 data Route
   = Home
@@ -55,3 +58,7 @@ parseRoute = hush <<< RD.parse routeCodec
 
 navigate :: Route -> Effect Unit
 navigate = setHash <<< printRoute
+
+-- | The webview's own history, which hash navigation feeds.
+goBack :: Effect Unit
+goBack = window >>= history >>= back

@@ -1,0 +1,35 @@
+{
+  "ancestors": [],
+  "descendants": [
+    {
+      "id": "900000000000000001",
+      "uri": "https://pixelfed.social/p/bob/900000000000000001",
+      "url": "https://pixelfed.social/p/bob/900000000000000001",
+      "in_reply_to_id": "812345678901234567",
+      "in_reply_to_account_id": "7",
+      "content": "<p>Lovely light</p>",
+      "content_text": "Lovely light",
+      "created_at": "2026-11-08T22:00:00.000Z",
+      "reblogs_count": 0,
+      "favourites_count": 1,
+      "favourited": false,
+      "sensitive": false,
+      "spoiler_text": "",
+      "visibility": "public",
+      "pf_type": "text",
+      "reply_count": 0,
+      "comments_disabled": false,
+      "media_attachments": [],
+      "account": {
+        "id": "1",
+        "username": "bob",
+        "acct": "bob",
+        "display_name": "Bob",
+        "url": "https://pixelfed.social/bob",
+        "avatar": "https://pixelfed.social/storage/avatars/1.jpg"
+      },
+      "tags": [],
+      "mentions": [ { "id": "7", "username": "alice", "acct": "alice", "url": "https://pixelfed.social/alice" } ]
+    }
+  ]
+}

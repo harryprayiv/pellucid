@@ -1,9 +1,9 @@
-//! Tauri shell. Every command here is a thin adapter over `pellucid_core`;
+//! Tauri shell. Every command here is a thin adapter over `pixelfed_core`;
 //! no protocol logic lives in this crate.
 
 use std::sync::Arc;
 
-use pellucid_core::{
+use pixelfed_core::{
     ApiRequest, ApiResponse, AppError, Core, Domain, FileStore, InstanceProbe, SessionSummary,
 };
 use serde::Serialize;
@@ -104,5 +104,5 @@ pub fn run() {
             api_follow
         ])
         .run(tauri::generate_context!())
-        .expect("error while running pellucid-ps");
+        .expect("error while running Pellucid");
 }

@@ -1,5 +1,5 @@
 {
-  description = "pellucid-ps: a Pellucid client in PureScript (Halogen) with a Rust (Tauri 2) shell";
+  description = "Pellucid: a Pixelfed client in PureScript (Halogen) with a Rust (Tauri 2) shell";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -86,7 +86,7 @@
               export GIO_MODULE_DIR="${pkgs.glib-networking}/lib/gio/modules/"
               # Avoids a blank WebKitGTK window on some GPU drivers.
               export WEBKIT_DISABLE_DMABUF_RENDERER=1
-              echo "pellucid-ps dev shell: purs $(purs --version), spago $(spago --version), $(cargo --version)"
+              echo "pellucid dev shell: purs $(purs --version), spago $(spago --version), $(cargo --version)"
             '';
           };
 
@@ -128,7 +128,7 @@
                 export JAVA_HOME="${pkgs.jdk17}"
                 export XDG_DATA_DIRS="${gsettingsPath pkgs}:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
                 export GIO_MODULE_DIR="${pkgs.glib-networking}/lib/gio/modules/"
-                echo "pellucid-ps android shell: ANDROID_HOME=$ANDROID_HOME"
+                echo "pellucid android shell: ANDROID_HOME=$ANDROID_HOME"
               '';
             };
         });
