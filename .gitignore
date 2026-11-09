@@ -2,3 +2,4 @@
 output
 target/*
 src-tauri/icons/*
+.psc-ide-port
