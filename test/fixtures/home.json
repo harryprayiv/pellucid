@@ -45,7 +45,7 @@
         "meta": { "focus": { "x": 0, "y": 0 }, "original": { "width": 4032, "height": 3024, "size": "4032x3024", "aspect": 1.3333 } },
         "description": "A sunset over the harbour",
         "license": null,
-        "is_nsfw": false,
+        "is_nsfw": 0,
         "orientation": "landscape",
         "filter_name": null,
         "filter_class": null,
@@ -64,7 +64,7 @@
         "meta": null,
         "description": null,
         "license": null,
-        "is_nsfw": false,
+        "is_nsfw": null,
         "orientation": null,
         "filter_name": null,
         "filter_class": null,
@@ -161,7 +161,7 @@
       "reblogged": false,
       "bookmarked": true,
       "media_attachments": [
-        { "id": "3", "type": "image", "url": "https://remote.example/m/c.jpg", "preview_url": null, "description": null, "blurhash": null, "is_nsfw": true, "meta": {} }
+        { "id": "3", "type": "image", "url": "https://remote.example/m/c.jpg", "preview_url": null, "description": null, "blurhash": null, "is_nsfw": 1, "meta": { "focus": { "x": 0, "y": 0 }, "original": { "width": "1080", "height": "1350", "size": "1080x1350", "aspect": 0.8 } } }
       ],
       "account": {
         "id": "11",

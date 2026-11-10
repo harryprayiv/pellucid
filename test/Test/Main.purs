@@ -4,22 +4,29 @@
 -- | notification with an unknown verb and an unreadable status, compose
 -- | settings with a comma-joined type list, a fresh upload with no url,
 -- | lists that carry `false` and `[]` in place of an entry, and direct
--- | messages as both Pixelfed 0.12 and 0.15 send them. The pure machines
--- | are tested in `Test.Pure`.
+-- | messages as both Pixelfed 0.12 and 0.15 send them.
+-- |
+-- | The fixtures carry the fields a real server sends uncast from the
+-- | database row the way it sends them: `is_nsfw` as `0`, `1` and null, and
+-- | a tagged post's `status_id` as a bare number. The section on loose
+-- | payloads checks the rule the decoders follow: only what identifies a
+-- | thing can fail its decode. The pure machines are tested in `Test.Pure`.
 module Test.Main (main) where
 
 import Prelude
 
-import Data.Argonaut.Decode (printJsonDecodeError)
+import Data.Argonaut.Decode (JsonDecodeError(..), printJsonDecodeError)
 import Data.Argonaut.Parser (jsonParser)
 import Data.Array as Array
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (instant)
+import Data.Either (Either(..))
 import Data.Maybe (Maybe(..), isJust)
+import Data.String (Pattern(..), contains)
 import Data.Time.Duration (Milliseconds(..))
 import Effect (Effect)
 import Effect.Console (log)
-import Pixelfed.Decode (decodeComposeSettings, decodeContext, decodeConversations, decodeHashtag, decodeHashtags, decodeMedia, decodeMessage, decodeNotifications, decodeRelationships, decodeSearch, decodeStatuses, decodeThread, decodeTrendingTags)
+import Pixelfed.Decode (decodeComposeSettings, decodeContext, decodeConversations, decodeHashtag, decodeHashtags, decodeMedia, decodeMessage, decodeNotifications, decodeRelationships, decodeSearch, decodeStatus, decodeStatuses, decodeThread, decodeTrendingTags)
 import Pixelfed.Entity (AccountId(..), MediaId(..), MediaType(..), MessageId(..), NotificationId(..), NotificationKind(..), PfType(..), Status(..), StatusId(..), Visibility(..), displayed, statusId)
 import Pixelfed.StatusOps (Toggle(..), canShare, merge, removeStatus)
 import Test.Check (check, either', maybe')
@@ -52,6 +59,45 @@ foreign import threadFixture :: String
 
 foreign import messageSentFixture :: String
 
+-- | A post with nothing but what identifies it and its author, and with
+-- | every other field either missing or in one of the other encodings the
+-- | readers accept.
+looseStatus :: String
+looseStatus =
+  """
+  { "id": 4242
+  , "account": { "id": 7, "username": "alice", "locked": 1, "is_admin": "0", "followers_count": "12" }
+  , "visibility": null
+  , "sensitive": "1"
+  , "comments_disabled": 0
+  , "favourited": 1
+  , "bookmarked": "false"
+  , "favourites_count": "3"
+  , "media_attachments":
+      [ { "type": "image", "url": "https://remote.example/no-id.jpg" }
+      , false
+      , { "id": 9, "type": "hologram", "is_nsfw": "true", "meta": { "original": { "width": 640.0, "height": "480" } } }
+      ]
+  , "tags": [ { "url": "https://remote.example/tags/nameless" }, { "name": "film" } ]
+  , "mentions": [ null, { "id": "3", "username": "bob" } ]
+  }
+  """
+
+-- | True when the decode failed and the printed error mentions every one
+-- | of the given words, which is how the person reading the error box
+-- | finds the field.
+failsNaming :: forall a. Array String -> Either JsonDecodeError a -> Boolean
+failsNaming words = case _ of
+  Left err -> Array.all (\word -> contains (Pattern word) (printJsonDecodeError err)) words
+  Right _ -> false
+
+-- | The tagged post id of each notification in a JSON array; empty when
+-- | the array does not decode.
+taggedIds :: String -> Array (Maybe StatusId)
+taggedIds raw = case decodeNotifications =<< lmap (const (TypeMismatch "JSON")) (jsonParser raw) of
+  Left _ -> []
+  Right notifications -> map (map _.statusId <<< _.tagged) notifications
+
 main :: Effect Unit
 main = do
   json <- either' "fixture is not JSON" (jsonParser fixture)
@@ -68,6 +114,7 @@ main = do
   check "image dims" ((_.dimensions =<< Array.index first.mediaAttachments 0) == Just { width: 4032, height: 3024 })
   check "video type" ((map _.mediaType (Array.index first.mediaAttachments 1)) == Just VideoMedia)
   check "video has no dims" ((_.dimensions =<< Array.index first.mediaAttachments 1) == Nothing)
+  check "is_nsfw as 0 and as null is false" (map _.isNsfw first.mediaAttachments == [ false, false ])
   check "liked_by" ((map _.totalCount first.likedBy) == Just 11)
   check "place" ((map _.name first.place) == Just "Boston")
   check "pronouns" (first.account.pronouns == [ "she/her" ])
@@ -88,6 +135,8 @@ main = do
   check "inner bookmarked" inner.bookmarked
   check "sparse account" (inner.account.followersCount == 0 && inner.account.displayName == "Dave")
   check "mention" ((map _.username (Array.index inner.mentions 0)) == Just "alice")
+  check "is_nsfw as 1 is true" (map _.isNsfw inner.mediaAttachments == [ true ])
+  check "dimensions sent as strings" ((_.dimensions =<< Array.index inner.mediaAttachments 0) == Just { width: 1080, height: 1350 })
 
   t0 <- maybe' "instant" (instant (Milliseconds 1_000_000_000.0))
   t1 <- maybe' "instant" (instant (Milliseconds (1_000_000_000.0 + 3.0 * 3600.0 * 1000.0)))
@@ -127,7 +176,13 @@ main = do
   check "share kind" (shareN.kind == NShare)
   taggedN <- maybe' "tagged notification" (Array.index notifs 4)
   check "tagged kind" (taggedN.kind == NTagged)
-  check "tagged status id" ((map _.statusId taggedN.tagged) == Just (StatusId "700000000000000001"))
+  -- The fixture sends `status_id` as a bare number, which JSON.parse rounds
+  -- to 700000000000000000; the exact id can only have come from `post_url`.
+  check "tagged status id comes from post_url" ((map _.statusId taggedN.tagged) == Just (StatusId "700000000000000001"))
+  check "tagged: an exact status_id is used when post_url carries no id"
+    (taggedIds """[ { "id": "1", "type": "tagged", "tagged": { "username": "alice", "post_url": "https://remote.example/notes/abc", "status_id": 4242 } } ]""" == [ Just (StatusId "4242") ])
+  check "tagged: an inexact status_id is not used"
+    (taggedIds """[ { "id": "1", "type": "tagged", "tagged": { "username": "alice", "post_url": "https://remote.example/notes/abc", "status_id": 700000000000000001 } } ]""" == [ Nothing ])
   other <- maybe' "unknown notification" (Array.index notifs 5)
   check "unknown verb kept" (other.kind == NOther "poll:ended")
   check "null actor is Nothing" (not (isJust other.account))
@@ -148,6 +203,34 @@ main = do
   check "null url falls back to preview_url" (uploaded.url == "https://pixelfed.social/storage/m/_v2/7/abc/new.jpg?v=1762680000")
   check "null meta gives no dims" (uploaded.dimensions == Nothing)
   check "null description" (uploaded.description == Nothing)
+  check "null is_nsfw on a fresh upload" (not uploaded.isNsfw)
+
+  -- Loose payloads: every field that does not identify the thing may be
+  -- absent or of another type without failing the decode.
+  looseJson <- either' "loose status is not JSON" (jsonParser looseStatus)
+  Status loose <- either' "decodeStatus (loose)" (lmap printJsonDecodeError (decodeStatus looseJson))
+  check "loose: numeric ids read as text" (loose.id == StatusId "4242" && loose.account.id == AccountId "7")
+  check "loose: a missing acct is the username" (loose.account.acct == "alice")
+  check "loose: missing uri and created_at are empty" (loose.uri == "" && loose.createdAt == "")
+  check "loose: null visibility is public" (loose.visibility == Public)
+  check "loose: flags as numbers and strings" (loose.sensitive && not loose.commentsDisabled && loose.account.locked && not loose.account.isAdmin && loose.favourited && not loose.bookmarked)
+  check "loose: counters as strings" (loose.favouritesCount == 3 && loose.account.followersCount == 12)
+  check "loose: attachments that cannot be identified are dropped" (map _.id loose.mediaAttachments == [ MediaId "9" ])
+  check "loose: a flag as the string true" (map _.isNsfw loose.mediaAttachments == [ true ])
+  check "loose: dimensions as a float and a string" ((_.dimensions =<< Array.head loose.mediaAttachments) == Just { width: 640, height: 480 })
+  check "loose: unreadable tags and mentions are dropped" (map _.name loose.tags == [ "film" ] && map _.acct loose.mentions == [ "bob" ])
+  check "loose: an unknown media type is kept as unknown" (map _.mediaType loose.mediaAttachments == [ UnknownMedia ])
+
+  check "strict: an account without a username fails, naming the field"
+    (failsNaming [ "account", "username" ] (decodeStatus =<< lmap (const (TypeMismatch "JSON")) (jsonParser """{ "id": "1", "account": { "id": "7" } }""")))
+  check "strict: a post without an id fails the page, naming its index"
+    (failsNaming [ "index 1", "'id'" ] (decodeStatuses =<< lmap (const (TypeMismatch "JSON")) (jsonParser """[ { "id": "1", "account": { "id": "7", "username": "alice" } }, { "account": { "id": "7", "username": "alice" } } ]""")))
+  check "strict: a share whose post cannot be read fails"
+    (failsNaming [ "reblog", "account" ] (decodeStatus =<< lmap (const (TypeMismatch "JSON")) (jsonParser """{ "id": "1", "account": { "id": "7", "username": "alice" }, "reblog": { "id": "2" } }""")))
+  check "strict: an id sent as a number too large to be exact fails"
+    (failsNaming [ "'id'", "exact" ] (decodeStatus =<< lmap (const (TypeMismatch "JSON")) (jsonParser """{ "id": 812345678901234567, "account": { "id": "7", "username": "alice" } }""")))
+  check "strict: a fractional id is not an id"
+    (failsNaming [ "'id'" ] (decodeStatus =<< lmap (const (TypeMismatch "JSON")) (jsonParser """{ "id": 1.5, "account": { "id": "7", "username": "alice" } }""")))
 
   -- The toggle merge rules, on the first fixture status.
   let liked = Status first
