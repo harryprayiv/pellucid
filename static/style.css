@@ -859,3 +859,360 @@ select:focus {
   background: var(--danger);
   color: #fff;
 }
+
+/* The stack of mounted screens: only the one in front is displayed. */
+
+.screen-hidden {
+  display: none;
+}
+
+/* Shared small pieces */
+
+button.secondary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+button.small {
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+button.link {
+  background: transparent;
+  color: var(--accent);
+  padding: 0;
+  border-radius: 4px;
+  font: inherit;
+  text-align: left;
+}
+
+.badge {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.notif-line .badge {
+  margin-left: 8px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.segment {
+  background: transparent;
+  color: var(--muted);
+  border-radius: 0;
+  padding: 6px 14px;
+  font-size: 15px;
+}
+
+.segment-active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px 16px 8px;
+}
+
+.section-head h2,
+.search-results h3,
+.settings-group h2 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.search-results h3 {
+  padding: 12px 16px 4px;
+}
+
+/* Card additions: share, who liked and shared, links in captions */
+
+.action-shared {
+  color: var(--accent);
+}
+
+.action-end {
+  margin-left: auto;
+}
+
+.card-engagement {
+  display: flex;
+  gap: 14px;
+  padding: 2px 16px 0;
+  font-size: 14px;
+}
+
+.card-engagement .link {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.card-caption .link,
+.comment-text .link {
+  display: inline;
+}
+
+/* Hashtag feed head */
+
+.tag-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Lists of accounts and hashtags */
+
+.account-rows,
+.tag-rows {
+  display: grid;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.account-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  border-radius: 0;
+}
+
+.account-names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.account-names strong,
+.account-names .acct {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.tag-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  border-radius: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* Explore */
+
+.search-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 16px;
+}
+
+.chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+.people-strip {
+  display: flex;
+  gap: 12px;
+  padding: 0 16px 4px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+}
+
+.person {
+  flex: 0 0 auto;
+  width: 84px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  background: transparent;
+  color: inherit;
+  scroll-snap-align: start;
+}
+
+.person-name {
+  max-width: 100%;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Profile additions */
+
+.counter-button {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border-radius: 6px;
+}
+
+.profile-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.profile-actions .follow {
+  flex: 1;
+  min-width: 0;
+}
+
+.profile-minor {
+  display: flex;
+  gap: 18px;
+  font-size: 14px;
+}
+
+/* Forms that stack their fields: profile editor, post editor, report */
+
+.stack-form {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.stack-form p {
+  margin: 0;
+}
+
+.reasons {
+  display: grid;
+  gap: 12px;
+}
+
+/* Settings */
+
+.settings-group {
+  display: grid;
+  padding: 16px 0 0;
+}
+
+.settings-group h2 {
+  padding: 0 16px 6px;
+}
+
+.settings-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  border-radius: 0;
+  border-top: 1px solid var(--border);
+}
+
+.settings-entry.danger {
+  color: var(--danger);
+}
+
+.settings-line {
+  margin: 0;
+  padding: 8px 16px;
+  font-size: 14px;
+}
+
+/* Direct messages */
+
+.bubbles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+}
+
+.bubble {
+  align-self: flex-start;
+  max-width: 82%;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.bubble-mine {
+  align-self: flex-end;
+  border-color: var(--accent);
+}
+
+.bubble-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble-media {
+  display: block;
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+.bubble-meta {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.thread-composer {
+  position: sticky;
+  bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom));
+  background: var(--bg);
+}

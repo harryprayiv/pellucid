@@ -25,6 +25,21 @@ module Pixelfed.Entity
   , Tagged
   , ComposeSettings
   , NewPost
+  , HashtagInfo
+  , TrendingTag
+  , SearchResults
+  , ProfileEdit
+  , PostEdit
+  , MessageId(..)
+  , Message
+  , Thread
+  , Conversation
+  , ReportTarget(..)
+  , ReportReason(..)
+  , reportReasons
+  , reportReasonName
+  , reportReasonLabel
+  , tagKey
   , statusId
   , displayed
   , isAlbum
@@ -38,7 +53,7 @@ import Prelude
 import Data.Array as Array
 import Data.Maybe (Maybe(..))
 import Data.Newtype (class Newtype)
-import Data.String (trim)
+import Data.String (toLower, trim)
 import Util.Text (stripTags)
 
 newtype AccountId = AccountId String
@@ -192,6 +207,133 @@ type Relationship =
   , requested :: Boolean
   }
 
+-- | A hashtag as `GET /api/v1/tags/{name}`, `/api/v1/followed_tags` and the
+-- | search endpoint give it. `count` is only sent with `_pe=1`.
+type HashtagInfo =
+  { name :: String
+  , following :: Boolean
+  , count :: Maybe Int
+  }
+
+-- | One entry of `GET /api/v1.1/discover/posts/hashtags`. `name` is the bare
+-- | tag (the server's `hashtag` field), without the leading `#`.
+type TrendingTag = { name :: String, total :: Int }
+
+-- | `GET /api/v2/search`. Pixelfed always answers `statuses: []`, so the
+-- | client keeps only the two lists that can hold something.
+type SearchResults =
+  { accounts :: Array Account
+  , hashtags :: Array HashtagInfo
+  }
+
+-- | What `POST /api/v1/accounts/update_credentials` accepts from the profile
+-- | editor. The server limits: display name 30, bio 200, website 120.
+type ProfileEdit =
+  { displayName :: String
+  , note :: String
+  , website :: String
+  , locked :: Boolean
+  }
+
+-- | What `PUT /api/v1/statuses/{id}` accepts. `mediaIds` must list every
+-- | attachment the post keeps, in order: the server deletes any it holds
+-- | that the list leaves out.
+type PostEdit =
+  { caption :: String
+  , sensitive :: Boolean
+  , spoilerText :: String
+  , mediaIds :: Array MediaId
+  }
+
+newtype MessageId = MessageId String
+
+derive instance Newtype MessageId _
+derive newtype instance Eq MessageId
+derive newtype instance Ord MessageId
+derive newtype instance Show MessageId
+
+-- | One direct message as `/api/v1.1/direct/thread` lists it. `kind` is the
+-- | server's `type` (text, emoji, photo, video, story:react and others).
+type Message =
+  { id :: MessageId
+  , isAuthor :: Boolean
+  , kind :: String
+  , text :: String
+  , media :: Maybe String
+  , createdAt :: String
+  , timeAgo :: String
+  , seen :: Boolean
+  }
+
+-- | `GET /api/v1.1/direct/thread?pid=`: the other person and one page of
+-- | messages, newest first.
+type Thread =
+  { id :: AccountId
+  , name :: String
+  , username :: String
+  , avatar :: String
+  , messages :: Array Message
+  }
+
+-- | One entry of `GET /api/v1/conversations`. `accounts` are the other
+-- | participants; `lastId` is the last message's id, which the list is
+-- | ordered and deduplicated by.
+type Conversation =
+  { id :: String
+  , unread :: Boolean
+  , accounts :: Array Account
+  , lastId :: String
+  , lastText :: String
+  , lastAt :: String
+  }
+
+-- | What a report is about. `POST /api/v1.1/report` names these `post` and `user`.
+data ReportTarget = AboutPost StatusId | AboutAccount AccountId
+
+derive instance Eq ReportTarget
+
+-- | `ApiV1Dot1Controller::REPORT_TYPES`.
+data ReportReason
+  = Spam
+  | Sensitive
+  | Abusive
+  | Underage
+  | Violence
+  | Copyright
+  | Impersonation
+  | Scam
+  | Terrorism
+
+derive instance Eq ReportReason
+
+reportReasons :: Array ReportReason
+reportReasons = [ Spam, Sensitive, Abusive, Underage, Violence, Copyright, Impersonation, Scam, Terrorism ]
+
+-- | The wire name.
+reportReasonName :: ReportReason -> String
+reportReasonName = case _ of
+  Spam -> "spam"
+  Sensitive -> "sensitive"
+  Abusive -> "abusive"
+  Underage -> "underage"
+  Violence -> "violence"
+  Copyright -> "copyright"
+  Impersonation -> "impersonation"
+  Scam -> "scam"
+  Terrorism -> "terrorism"
+
+reportReasonLabel :: ReportReason -> String
+reportReasonLabel = case _ of
+  Spam -> "Spam"
+  Sensitive -> "Sensitive content without a warning"
+  Abusive -> "Abusive or harmful"
+  Underage -> "Underage account"
+  Violence -> "Violence"
+  Copyright -> "Copyright infringement"
+  Impersonation -> "Impersonation"
+  Scam -> "Scam or fraud"
+  Terrorism -> "Terrorism"
+
 -- | `GET /api/v1/statuses/{id}/context`.
 type Context =
   { ancestors :: Array Status
@@ -283,3 +425,7 @@ isAlbum = case _ of
   VideoAlbum -> true
   PhotoVideoAlbum -> true
   _ -> false
+
+-- | Hashtags compare without case; this is the form lists are keyed by.
+tagKey :: String -> String
+tagKey = toLower

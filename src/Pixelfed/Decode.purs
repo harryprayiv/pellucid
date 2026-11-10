@@ -3,6 +3,14 @@
 -- | nulls others, and adds its own when `_pe=1` is requested.
 module Pixelfed.Decode
   ( decodeAccount
+  , decodeAccounts
+  , decodeHashtag
+  , decodeHashtags
+  , decodeTrendingTags
+  , decodeSearch
+  , decodeMessage
+  , decodeThread
+  , decodeConversations
   , decodeStatus
   , decodeStatuses
   , decodeMedia
@@ -20,6 +28,7 @@ import Prelude
 import Data.Argonaut.Core (Json, isNull, toNumber, toString)
 import Data.Argonaut.Decode (JsonDecodeError, decodeJson, (.:), (.:?))
 import Data.Argonaut.Decode.Decoders (decodeArray)
+import Data.Array as Array
 import Data.Either (Either, either, hush)
 import Data.Int as Int
 import Data.Maybe (Maybe(..), fromMaybe)
@@ -27,7 +36,8 @@ import Data.String (toLower)
 import Data.String as String
 import Data.Traversable (traverse)
 import Foreign.Object (Object)
-import Pixelfed.Entity (Account, AccountId(..), ComposeSettings, Context, LikedBy, MediaAttachment, MediaId(..), MediaType(..), Mention, Notification, NotificationId(..), NotificationKind(..), PfType(..), Place, Relationship, Status(..), StatusId(..), Tag, Visibility(..))
+import Pixelfed.Entity (Account, AccountId(..), ComposeSettings, Context, Conversation, HashtagInfo, LikedBy, MediaAttachment, MediaId(..), MediaType(..), Mention, Message, MessageId(..), Notification, NotificationId(..), NotificationKind(..), PfType(..), Place, Relationship, SearchResults, Status(..), StatusId(..), Tag, Thread, TrendingTag, Visibility(..))
+import Util.Text (stripTags)
 
 decodeStatuses :: Json -> Either JsonDecodeError (Array Status)
 decodeStatuses = decodeArray decodeStatus
@@ -340,3 +350,97 @@ lenientInt dflt = case _ of
   Just json -> fromMaybe dflt $ case toNumber json of
     Just n -> Int.fromNumber n
     Nothing -> toString json >>= Int.fromString
+
+-- | A list in which an entry that does not decode is dropped instead of
+-- | failing the page. Used for lists of accounts, hashtags and messages,
+-- | where the server itself filters out what it could not load and has
+-- | shipped `[]` and `false` in place of an entry.
+decodeArrayLenient :: forall a. (Json -> Either JsonDecodeError a) -> Json -> Either JsonDecodeError (Array a)
+decodeArrayLenient decode json = Array.mapMaybe (hush <<< decode) <$> decodeJson json
+
+decodeAccounts :: Json -> Either JsonDecodeError (Array Account)
+decodeAccounts = decodeArrayLenient decodeAccount
+
+-- | `{ name, url, history, following?, count? }`. `following` is absent from
+-- | search results and `count` is only sent with `_pe=1`.
+decodeHashtag :: Json -> Either JsonDecodeError HashtagInfo
+decodeHashtag json = do
+  obj <- decodeJson json
+  name <- obj .: "name"
+  following <- fromMaybe false <$> obj .:? "following"
+  countJson <- obj .:? "count"
+  pure { name, following, count: map (\j -> lenientInt 0 (Just j)) countJson }
+
+decodeHashtags :: Json -> Either JsonDecodeError (Array HashtagInfo)
+decodeHashtags = decodeArrayLenient decodeHashtag
+
+-- | `TrendingHashtagService::getTrending`: `{ id, total, name: "#tag",
+-- | hashtag: "tag", url }`.
+decodeTrendingTags :: Json -> Either JsonDecodeError (Array TrendingTag)
+decodeTrendingTags = decodeArrayLenient \json -> do
+  obj <- decodeJson json
+  bare <- obj .:? "hashtag"
+  display <- obj .:? "name"
+  total <- lenientInt 0 <$> obj .:? "total"
+  name <- case bare, display of
+    Just b, _ -> pure b
+    Nothing, Just d -> pure (fromMaybe d (String.stripPrefix (String.Pattern "#") d))
+    Nothing, Nothing -> obj .: "hashtag"
+  pure { name, total }
+
+-- | `GET /api/v2/search`: `{ accounts, hashtags, statuses }`.
+decodeSearch :: Json -> Either JsonDecodeError SearchResults
+decodeSearch json = do
+  obj <- decodeJson json
+  accounts <- obj .:? "accounts" >>= traverse decodeAccounts >>> map (fromMaybe [])
+  hashtags <- obj .:? "hashtags" >>= traverse decodeHashtags >>> map (fromMaybe [])
+  pure { accounts, hashtags }
+
+-- | A direct message in the thread endpoint's own shape. Older servers omit
+-- | `created_at` from the answer to a send.
+decodeMessage :: Json -> Either JsonDecodeError Message
+decodeMessage json = do
+  obj <- decodeJson json
+  id <- MessageId <$> (obj .: "id" >>= idString)
+  isAuthor <- fromMaybe false <$> obj .:? "isAuthor"
+  kind <- fromMaybe "text" <$> obj .:? "type"
+  text <- fromMaybe "" <$> obj .:? "text"
+  media <- obj .:? "media"
+  createdAt <- fromMaybe "" <$> obj .:? "created_at"
+  timeAgo <- fromMaybe "" <$> obj .:? "timeAgo"
+  seen <- fromMaybe false <$> obj .:? "seen"
+  pure { id, isAuthor, kind, text, media, createdAt, timeAgo, seen }
+
+decodeThread :: Json -> Either JsonDecodeError Thread
+decodeThread json = do
+  obj <- decodeJson json
+  id <- AccountId <$> (obj .: "id" >>= idString)
+  username <- fromMaybe "" <$> obj .:? "username"
+  name <- fromMaybe username <$> obj .:? "name"
+  avatar <- fromMaybe "" <$> obj .:? "avatar"
+  messages <- obj .:? "messages" >>= traverse (decodeArrayLenient decodeMessage) >>> map (fromMaybe [])
+  pure { id, name, username, avatar, messages }
+
+-- | `GET /api/v1/conversations`. The entry's own id is a number on older
+-- | servers and a string on newer ones; `last_status` is a status-shaped
+-- | wrapper around the last message.
+decodeConversations :: Json -> Either JsonDecodeError (Array Conversation)
+decodeConversations = decodeArrayLenient \json -> do
+  obj <- decodeJson json
+  id <- obj .: "id" >>= idString
+  unread <- fromMaybe false <$> obj .:? "unread"
+  accounts <- obj .:? "accounts" >>= traverse decodeAccounts >>> map (fromMaybe [])
+  last <- obj .: "last_status"
+  lastId <- last .: "id" >>= idString
+  contentText <- last .:? "content_text"
+  content <- fromMaybe "" <$> last .:? "content"
+  lastAt <- fromMaybe "" <$> last .:? "created_at"
+  pure { id, unread, accounts, lastId, lastText: fromMaybe (stripTags content) contentText, lastAt }
+
+-- | An id that may arrive as a string or as a number.
+idString :: Json -> Either JsonDecodeError String
+idString json = case toString json of
+  Just str -> pure str
+  Nothing -> case toNumber json >>= Int.fromNumber of
+    Just n -> pure (show n)
+    Nothing -> decodeJson json

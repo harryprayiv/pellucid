@@ -11,13 +11,22 @@ Pellucid is not affiliated with the Pixelfed project.
 This is early work and is not released. The desktop Linux build is the only one that has been exercised. What is built:
 
 - Login to any Pixelfed instance through OAuth 2 with PKCE in the system browser, with the session persisted locally.
-- Home and public timelines with cursor pagination, likes, bookmarks, sensitive media covers, albums and video.
-- Post detail with comments, replying, deleting your own comments, likes on comments, and deleting your own post after a confirmation.
-- Profiles with follow, unfollow and follow requests, a three-wide grid of posts with paging, and the Me tab.
-- Notifications: likes, comments, shares, follows, mentions and tags, newest first with paging, each opening the post or the person concerned.
+- Home and public timelines, likes, shares, bookmarks, sensitive media covers, albums and video, with hashtags and mentions in captions as links.
+- Post detail with comments, replying, deleting your own comments, likes on comments, editing your own post, deleting it after a confirmation, and reporting someone else's.
+- Explore: search over people and hashtags, trending hashtags, popular accounts and trending posts by day, month and year.
+- Hashtag feeds with follow and unfollow, and the list of hashtags you follow.
+- Profiles with follow, unfollow and follow requests, mute, block after a confirmation, report, a three-wide grid of posts, and the lists of followers and following.
+- Who liked and who shared a post.
+- Your bookmarks and your likes.
+- Notifications: likes, comments, shares, follows, mentions, tags and direct messages, each opening the post, the conversation or the person concerned.
+- Direct messages: your conversations, a thread with earlier messages on demand, sending text, deleting your own messages.
 - Compose: pick photos or videos, each uploaded as it is picked through the Rust side, alt text per file, caption, visibility, sensitive flag with content warning, comments off, with the instance's own limits applied before anything is sent.
+- Settings: the profile editor (display name, bio, website, private account), follow requests with accept and reject, muted and blocked accounts, and logging out after a confirmation.
+- Every list loads further as you scroll, and going back returns to the screen you left, where you left it, without fetching it again.
 
-What is not built: search and discover, hashtags, direct messages, followers and following lists, stories, settings, moderation, editing a published post, notification filters, infinite scroll (lists end in a Load more button), blurhash placeholders, hashtag and mention links, the Android and iOS shells, and a Nix package for the bundle and the binary. Token revocation on logout is not possible against stock Pixelfed; see the protocol notes. The specification lists each of these as a surface or a known issue.
+What is not built: stories, collections, the admin screens, push notifications, avatar upload, a recipient picker for a new conversation (a conversation starts from a profile), sending media in a direct message, blocked domains, notification type filters, post edit history, cropping and location tagging in the composer, blurhash placeholders, the Android and iOS shells, and a Nix package for the bundle and the binary. Token revocation on logout is not possible against stock Pixelfed; see the protocol notes. The specification lists each of these as not built or as a known issue.
+
+Nothing here has spoken to a running server yet. Every screen has run against a mock of the shell, and every fact about the server comes from reading Pixelfed's source at 0.15.2 and at 0.12.5. The first real login is the next thing to do.
 
 ## Why this shape
 
@@ -30,16 +39,15 @@ Since Rust has to make the requests anyway, the access token has no reason to ex
 ```
 PureScript (Halogen)          Rust (crates/pixelfed-core)   Tauri shell (src-tauri)
 Component.Root                core: session, http client    seven commands, two events
-Component.Login   -invoke->   oauth: apps, PKCE, authorize  opens the system browser,
-Component.Feed                URL, loopback listener,       emits session-changed
-Component.StatusDetail        token exchange                and login-failed,
-Component.Profile             api: request_url, follow,     unpacks the raw upload body,
-Component.Notifications       send, multipart upload        FileStore with mode 0600
-Component.Compose <-event-    link: Link header parser
-View.StatusCard               domain: validated https host
-Pixelfed.Client               store: SecretStore trait
-Pixelfed.Decode               error: closed AppError sum
-App.Backend (the seam)
+  App.Stack, App.Screen       oauth: apps, PKCE, authorize  opens the system browser,
+fifteen screen components     URL, loopback listener,       emits session-changed
+  -invoke->                   token exchange                and login-failed,
+App.Paged                     api: request_url, follow,     unpacks the raw upload body,
+View.StatusCard, View.Tile    send, multipart upload        FileStore with mode 0600
+Util.Caption, Util.Scroll     link: Link header parser
+Pixelfed.Client   <-event-    domain: validated https host
+Pixelfed.Decode               store: SecretStore trait
+App.Backend (the seam)        error: closed AppError sum
 ```
 
 `crates/pixelfed-core` has no UI and no Tauri dependency. It owns the OAuth dance, the token, the authenticated transport, the multipart upload and the validation of every URL the token travels to. It has unit tests, including a loopback OAuth round trip, the RFC 7636 PKCE test vector and the upload size bounds.
@@ -47,6 +55,8 @@ App.Backend (the seam)
 `src-tauri` is an adapter. Each command calls one core method; the only extra behaviour is opening the browser, emitting the two events, and unpacking the raw body and three headers of the upload command. It holds no protocol logic.
 
 `src` is the PureScript application. `App.Backend` is a record of functions, one per shell command plus two subscriptions, and `App.Backend.Tauri` implements it over `window.__TAURI__`. Screens import the seam, never the Tauri module. Entities and decoders are written against Pixelfed's own transformers rather than the Mastodon specification, because Pixelfed omits some fields, nulls others and adds its own.
+
+Three pure modules carry the rules every screen shares. `Pixelfed.Client` exposes each list as a `Pager`, a function that fetches one chunk and the pager for the chunk after it, which hides the four ways Pixelfed paginates. `App.Paged` is the state machine every paginated screen runs: no chunk is requested twice, no item appears twice, a chunk with nothing new ends the list, and an answer nobody is waiting for is dropped. `App.Stack` decides whether a route change is a step back, a switch of tab or a step forward, so the screen underneath stays mounted with its state and scroll position. Because screens stay mounted, a change made on one (a like, an edit, a deletion) is raised to `Component.Root` and sent to every other screen that shows the same post; `App.Screen` holds that protocol.
 
 There is no npm, no package.json and no node_modules. The frontend is spago packages plus two hand-written foreign modules: `src/App/Backend/Tauri.js`, which exists because Tauri's `withGlobalTauri` setting exposes `invoke` and `listen` on the window object, and `src/Util/File.js`, which calls `file.arrayBuffer()` on a picked file. esbuild comes from nixpkgs and is driven by `spago bundle`. Node comes from nixpkgs as well, only as the runtime `spago test` executes the compiled tests with.
 
@@ -99,15 +109,19 @@ Everything up to the last step runs on a fresh clone. The last step needs the ic
 
 ## Tests
 
-`cargo test -p pixelfed-core` covers domain parsing and origin checks, the version floor, the Link header parser, request URL building and the refusal of non-API paths and foreign cursors, error message extraction, the session store's permissions and round trip, PKCE against the RFC 7636 appendix B vector and the freshness of generated verifiers, the upload bounds, and a real loopback OAuth round trip over a socket.
+`cargo test -p pixelfed-core` covers domain parsing and origin checks, the server name and version floor a nodeinfo document must meet, the Link header parser, request URL building and the refusal of non-API paths and foreign cursors, error message extraction, the session store's permissions and round trip, PKCE against the RFC 7636 appendix B vector and the freshness of generated verifiers, the upload bounds, and a real loopback OAuth round trip over a socket.
 
-`spago test` decodes fixtures shaped like Pixelfed's `StatusTransformer`, `RelationshipService`, `NotificationTransformer`, `MediaTransformer` as `POST /api/v2/media` returns it, the compose settings endpoint and the context endpoint, including the lenient paths: string and null counters, a null `content_text`, the empty `liked_by` form, a share wrapper, a sparse remote account, a notification with an unknown verb and an unreadable status, a comma-joined media type list and an upload with a null `url`.
+`spago test` runs 162 checks. It decodes fixtures shaped like Pixelfed's `StatusTransformer`, `RelationshipService`, `NotificationTransformer`, `MediaTransformer` as `POST /api/v2/media` returns it, the compose settings, context, search, hashtag, trending and direct message endpoints, including the lenient paths: string and null counters, a null `content_text`, the empty `liked_by` form, a share wrapper, a sparse remote account, a notification with an unknown verb and an unreadable status, a comma-joined media type list, an upload with a null `url`, lists that carry `false` and `[]` in place of an entry, and direct messages as both 0.12 and 0.15 send them. It also tests the pure machines: the paged list, the navigation stack, the round trip of every route, caption links, and the merge rules for like, bookmark and share.
 
-The bundled UI is also exercised end to end in a headless DOM against a mock of the shell's command and event contract, including the raw-body upload. That harness is not part of this repository and the gate does not run it; the specification records this as a known issue.
+The bundled UI is also exercised end to end in a headless DOM against a mock of the shell's command and event contract: 122 steps through every screen, including the raw-body upload. That harness is JavaScript on jsdom, is not part of this repository, and the gate does not run it; the specification records this as a known issue.
 
 ## Specification
 
-`.inference/pellucid.allium` is the contract the code is held to. It records the facts about Pixelfed the client depends on, each with where it was checked in Pixelfed's source, the decisions behind the design, every rule a screen implements, the invariants above, the surfaces built and not built, and the open questions. Where the code and the specification disagree, the specification records the intended behaviour and its IMPLEMENTATION STATUS section says which parts are built.
+`.inference/pellucid.allium` is the contract the client code is held to. It records the facts about Pixelfed the client depends on, each with where it was checked in Pixelfed's source, the decisions behind the design, every rule a screen implements, the invariants above, the surfaces, the known issues and the open questions. Where the code and the specification disagree, the specification records the intended behaviour and its IMPLEMENTATION STATUS section says which parts are built.
+
+`.inference/pellucid-server.allium` specifies the server Pellucid will need: accounts, OAuth with public clients and token revocation, media, posts, follows, blocks, direct messages, reports and moderation with notices and appeals, federation deliveries, and export. None of it is built. Its decisions S5 to S16 are proposals for what a less authoritarian server means and are marked as such.
+
+Both files pass `allium check` (allium-cli 3.6.1) with no errors and no warnings. Every lifecycle in them is a field named `status` with a transition graph, because that is the form the checker's state analysis covers: it rejects a rule that makes a transition the graph does not declare, a status no rule assigns and a status no rule leaves. The checker does not verify that the code matches the specification; that is done by reading, rule by rule.
 
 Change the specification and the code together. A pull request that changes behaviour without touching the specification is incomplete.
 
@@ -117,7 +131,9 @@ Every read sends `_pe=1`. That flag selects Pixelfed's own entity, which carries
 
 The bookmark endpoints ignore `_pe` and always return the Mastodon entity. The client merges only the `bookmarked` flag from that answer. The favourite endpoints honour `_pe` and their answer replaces the local copy.
 
-Timelines paginate by the `Link` header. The client stores the `next` URL as an opaque cursor and asks Rust to follow it after validation. The account statuses endpoint sends no `Link` header; the profile grid pages by `max_id` with the last id it holds, and an empty page ends the list. Pages are deduplicated by status id.
+Pixelfed paginates in four ways. Timelines, notifications, bookmarks, favourites, mutes, blocks, followed hashtags and conversations send a `Link` header whose `rel="next"` leads further into the list. Followers, following, who liked and who shared are cursor-paginated and file the same direction under `rel="prev"`; who liked and who shared send the header to the post's author only, so everyone else sees one page. Account statuses and the direct message thread send no `Link` header and page by `max_id`. The hashtag timeline pages by `max_id` on 0.12 and by an opaque cursor in a `Link` header on 0.15, where a bare `max_id` answers an empty list; the client follows the header when there is one and falls back to `max_id` when there is not. In every case the client stores a cursor as an opaque value and asks Rust to follow it after validation, and lists are deduplicated by id.
+
+The share endpoints accept public posts only and answer with the Mastodon entity, in which the share count is the count before the server's queue has counted the share; the client takes the flag and moves the count by one itself. `PUT /api/v1/statuses/{id}` deletes from storage every attachment its `media_ids` leaves out, so the post editor always sends the full list. Search never returns posts. A report's note is limited to 255 bytes, a direct message to 500 characters on 0.12 and 2000 on 0.15, and 0.12 omits `created_at` from the answer to a sent message.
 
 The context endpoint returns up to 100 descendants and no `Link` header, so comments are one request, shown flat in server order.
 
@@ -136,7 +152,8 @@ pixelfed.social and any other public instance running 0.12.3 or newer work as th
 ## Repository layout
 
 ```
-.inference/pellucid.allium     the specification
+.inference/pellucid.allium          the client specification
+.inference/pellucid-server.allium   the server specification (nothing built)
 crates/pixelfed-core/          Rust: OAuth, session, transport (no UI)
 src-tauri/                     Rust: Tauri shell, commands, events, config
 src/                           PureScript: entities, decoders, client, screens
@@ -149,8 +166,19 @@ spago.yaml, Cargo.toml         package manifests
 
 ## Roadmap
 
-In order: the lab instance deployed and the first real login, feed, upload and post against it (everything so far has run against a mock of the shell and the reading of the server's source), then search, discover and hashtags, then the mobile shells (deep link redirect, platform secret stores, the Android dev shell made real), then direct messages, followers and following lists, stories, settings and moderation. Infinite scroll, blurhash placeholders, hashtag and mention links, notification filters and removing a deleted post from the feed behind it are smaller items that land alongside. Token revocation waits for a server that offers it.
+In order: the lab instance deployed and the first real login, feed, upload, post, search and direct message against it (everything so far has run against a mock of the shell and the reading of the server's source), then the mobile shells (deep link redirect, platform secret stores, the Android dev shell made real), then stories, collections, avatar upload and the admin screens, then the server. Cancelling an abandoned login in Rust, a recipient picker for new conversations, blurhash placeholders and notification filters are smaller items that land alongside. Token revocation waits for a server that offers it.
 
 ## License
 
 AGPL-3.0-or-later. The license text belongs in `LICENSE` at the repository root.
+
+## 🤝 Contributing
+
+Contributions are welcome. Please feel free to submit a Pull Request.
+
+## Support
+
+
+If you like my style, Cardano ADA donations fund continued work. 
+
+[![Donate ADA](https://img.shields.io/badge/Donate-ADA-0033AD?style=for-the-badge&logo=cardano&logoColor=white)](https://cardanoscan.io/address/addr1qxankwszy6zaclef8vq5fjn3008689yswvangmz604npjhms7402kf0h964awtj8d6xz7lzlvnrq6hz6wu6k845pzkvspum4l7)

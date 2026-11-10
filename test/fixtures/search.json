@@ -1,0 +1,57 @@
+{
+  "accounts": [
+    {
+      "id": "7",
+      "username": "bob",
+      "acct": "bob",
+      "display_name": "Bob",
+      "note": "",
+      "note_text": "",
+      "url": "https://pixelfed.social/bob",
+      "avatar": "https://pixelfed.social/storage/avatars/7.jpg",
+      "locked": false,
+      "followers_count": 3,
+      "following_count": 4,
+      "statuses_count": 5,
+      "local": true,
+      "is_admin": false,
+      "created_at": "2025-01-01T10:34:12.612584Z"
+    },
+    {
+      "id": "9",
+      "username": "carol",
+      "acct": "carol@remote.example",
+      "display_name": "Carol",
+      "note": "",
+      "note_text": "",
+      "url": "https://remote.example/users/carol",
+      "avatar": "https://pixelfed.social/storage/avatars/9.jpg",
+      "locked": true,
+      "followers_count": 3,
+      "following_count": 4,
+      "statuses_count": 5,
+      "local": false,
+      "is_admin": false,
+      "created_at": "2025-01-01T10:34:12.612584Z"
+    },
+    false,
+    {
+      "id": "11"
+    }
+  ],
+  "hashtags": [
+    {
+      "name": "sunset",
+      "url": "https://pixelfed.social/discover/tags/sunset",
+      "history": [],
+      "count": 1204
+    },
+    {
+      "name": "Sunrise",
+      "url": "https://pixelfed.social/discover/tags/sunrise",
+      "history": [],
+      "count": "0"
+    }
+  ],
+  "statuses": []
+}

@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::error::AppError;
 
-/// A validated instance host, e.g. `pellucid.social` or `pix.example.org:8443`.
+/// A validated instance host, e.g. `pixelfed.social` or `pix.example.org:8443`.
 /// Constructing one is the only way to get a base URL, so every request in the
 /// crate is guaranteed to target an https origin the user actually typed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -31,7 +31,7 @@ impl Domain {
         }
         if without_scheme.contains(['/', '?', '#', '@', ' ']) {
             return Err(AppError::InvalidDomain {
-                message: "expected a bare host like pellucid.social".into(),
+                message: "expected a bare host like pixelfed.social".into(),
             });
         }
 
@@ -45,7 +45,7 @@ impl Domain {
         })?;
         if !host.contains('.') && host != "localhost" {
             return Err(AppError::InvalidDomain {
-                message: "host needs a dot (pellucid.social, not pellucid)".into(),
+                message: "host needs a dot (pixelfed.social, not pixelfed)".into(),
             });
         }
 
@@ -103,8 +103,8 @@ mod tests {
     #[test]
     fn strips_scheme_and_slashes() {
         assert_eq!(
-            Domain::parse(" https://Pellucid.Social/ ").unwrap().as_str(),
-            "pellucid.social"
+            Domain::parse(" https://Pixelfed.Social/ ").unwrap().as_str(),
+            "pixelfed.social"
         );
     }
 
@@ -118,18 +118,18 @@ mod tests {
 
     #[test]
     fn rejects_paths_and_userinfo() {
-        assert!(Domain::parse("pellucid.social/api").is_err());
-        assert!(Domain::parse("user@pellucid.social").is_err());
+        assert!(Domain::parse("pixelfed.social/api").is_err());
+        assert!(Domain::parse("user@pixelfed.social").is_err());
         assert!(Domain::parse("").is_err());
-        assert!(Domain::parse("pellucid").is_err());
+        assert!(Domain::parse("pixelfed").is_err());
     }
 
     #[test]
     fn owns_only_same_https_origin() {
-        let d = Domain::parse("pellucid.social").unwrap();
-        assert!(d.owns(&Url::parse("https://pellucid.social/api/v1/timelines/home?max_id=1").unwrap()));
-        assert!(!d.owns(&Url::parse("http://pellucid.social/api/v1/timelines/home").unwrap()));
+        let d = Domain::parse("pixelfed.social").unwrap();
+        assert!(d.owns(&Url::parse("https://pixelfed.social/api/v1/timelines/home?max_id=1").unwrap()));
+        assert!(!d.owns(&Url::parse("http://pixelfed.social/api/v1/timelines/home").unwrap()));
         assert!(!d.owns(&Url::parse("https://evil.example/api/v1/timelines/home").unwrap()));
-        assert!(!d.owns(&Url::parse("https://pellucid.social:8443/api").unwrap()));
+        assert!(!d.owns(&Url::parse("https://pixelfed.social:8443/api").unwrap()));
     }
 }

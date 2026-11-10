@@ -100,6 +100,13 @@ defaultSettings =
 maxSpoilerLength :: Int
 maxSpoilerLength = 140
 
+-- | The visibility a new post starts with: the instance's default when it
+-- | is one a post can have, public otherwise.
+startVisibility :: ComposeSettings -> Visibility
+startVisibility settings = case settings.defaultVisibility of
+  Just v | v == Public || v == Unlisted || v == Private -> v
+  _ -> Public
+
 component :: forall q i o m. MonadAff m => MonadAsk Env m => H.Component q i o m
 component = H.mkComponent
   { initialState: \_ -> initialState
@@ -314,12 +321,7 @@ handleAction = case _ of
     result <- liftAff (composeSettings backend)
     H.modify_ \s -> case result of
       Left err -> s { notice = Just ("Using default upload limits. " <> printAppError err) }
-      Right settings -> s
-        { settings = settings
-        , visibility = case settings.defaultVisibility of
-            Just v | v == Public || v == Unlisted || v == Private -> v
-            _ -> s.visibility
-        }
+      Right settings -> s { settings = settings, visibility = startVisibility settings }
 
   Back -> liftEffect goBack
 
@@ -389,7 +391,11 @@ handleAction = case _ of
           }
         case result of
           Left err -> H.modify_ _ { posting = PostFailed (printAppError err) }
-          Right status -> liftEffect (navigate (StatusDetail (statusId status)))
+          Right status -> do
+            -- The composer stays mounted under the post it leads to, so it
+            -- is emptied here: coming back must not offer the same post again.
+            H.modify_ \s -> initialState { settings = s.settings, visibility = startVisibility s.settings }
+            liftEffect (navigate (StatusDetail (statusId status)))
 
 -- | Adds one picked file: a row, then an upload in the background. Files
 -- | the instance would refuse are rejected here with the reason, and keep

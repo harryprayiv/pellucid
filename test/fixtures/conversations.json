@@ -1,0 +1,69 @@
+[
+  {
+    "id": "501",
+    "unread": true,
+    "accounts": [
+      {
+        "id": "7",
+        "username": "bob",
+        "acct": "bob",
+        "display_name": "Bob",
+        "note": "",
+        "note_text": "",
+        "url": "https://pixelfed.social/bob",
+        "avatar": "https://pixelfed.social/storage/avatars/7.jpg",
+        "locked": false,
+        "followers_count": 3,
+        "following_count": 4,
+        "statuses_count": 5,
+        "local": true,
+        "is_admin": false,
+        "created_at": "2025-01-01T10:34:12.612584Z"
+      }
+    ],
+    "last_status": {
+      "id": "9100",
+      "uri": "https://pixelfed.social/i/web/direct/thread/7",
+      "url": "https://pixelfed.social/i/web/direct/thread/7",
+      "in_reply_to_id": null,
+      "content": "<p>See you at eight</p>",
+      "content_text": "See you at eight",
+      "created_at": "2026-11-07T04:03:31.000Z",
+      "visibility": "direct"
+    }
+  },
+  {
+    "id": 77,
+    "unread": false,
+    "accounts": [
+      {
+        "id": "9",
+        "username": "carol",
+        "acct": "carol@remote.example",
+        "display_name": "Carol",
+        "note": "",
+        "note_text": "",
+        "url": "https://remote.example/users/carol",
+        "avatar": "https://pixelfed.social/storage/avatars/9.jpg",
+        "locked": false,
+        "followers_count": 3,
+        "following_count": 4,
+        "statuses_count": 5,
+        "local": false,
+        "is_admin": false,
+        "created_at": "2025-01-01T10:34:12.612584Z"
+      }
+    ],
+    "last_status": {
+      "id": "9050",
+      "content": "<p>Thanks &amp; bye</p>",
+      "created_at": "2026-11-01T10:00:00.000Z"
+    }
+  },
+  {
+    "id": "502",
+    "unread": false,
+    "accounts": [],
+    "last_status": null
+  }
+]

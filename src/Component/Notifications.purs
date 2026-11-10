@@ -1,19 +1,20 @@
 -- | The viewer's notifications, newest first, paginated by the Link header
 -- | like a timeline. A row names the actor and what they did; tapping it
--- | opens the post concerned, or the actor's profile when there is none.
+-- | opens the post concerned, the conversation for a direct message, or the
+-- | actor's profile when there is nothing else to open.
 module Component.Notifications (component) where
 
 import Prelude
 
-import App.Backend (AppError, Cursor, printAppError)
 import App.Monad (Env)
+import App.Paged (Paged, Phase(..))
+import App.Paged as Paged
 import App.Route (Route(..), navigate)
+import App.Screen as Screen
 import Control.Monad.Reader (class MonadAsk, asks)
 import Data.Array as Array
 import Data.DateTime.Instant (Instant)
-import Data.Either (Either(..))
 import Data.Maybe (Maybe(..), fromMaybe)
-import Data.Set as Set
 import Data.String (take)
 import Data.String as String
 import Effect.Aff.Class (class MonadAff, liftAff)
@@ -23,23 +24,14 @@ import Halogen as H
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
-import Pixelfed.Client (followNotifications, notifications)
+import Pixelfed.Client (notificationsPager, runPager)
 import Pixelfed.Entity (Notification, NotificationKind(..), Status(..), captionOf, displayed, firstMedia, statusId)
-import View.Common (agoLabel, avatar, cls, handleName, iconButton, lazy)
+import View.Common (agoLabel, avatar, cls, errorBox, handleName, iconButton, lazy, pagedFooter, statusLine)
 
 type State =
-  { list :: ListState
+  { list :: Paged Notification
   , now :: Maybe Instant
   }
-
-data ListState
-  = Loading
-  | Failed AppError
-  | Loaded Loaded
-
-type Loaded = { items :: Array Notification, next :: Maybe Cursor, more :: MoreState }
-
-data MoreState = Idle | LoadingMore | MoreFailed AppError | Exhausted
 
 data Action
   = Initialize
@@ -47,11 +39,15 @@ data Action
   | LoadMore
   | Open Route
 
-component :: forall q i o m. MonadAff m => MonadAsk Env m => H.Component q i o m
+component :: forall i m. MonadAff m => MonadAsk Env m => H.Component Screen.Query i Screen.Output m
 component = H.mkComponent
-  { initialState: \_ -> { list: Loading, now: Nothing }
+  { initialState: \_ -> { list: Paged.loading, now: Nothing }
   , render
-  , eval: H.mkEval H.defaultEval { handleAction = handleAction, initialize = Just Initialize }
+  , eval: H.mkEval H.defaultEval
+      { handleAction = handleAction
+      , handleQuery = handleQuery
+      , initialize = Just Initialize
+      }
   }
 
 render :: forall m. State -> H.ComponentHTML Action () m
@@ -61,18 +57,14 @@ render state =
         [ HH.h1_ [ HH.text "Notifications" ]
         , iconButton "ghost" "Refresh" "\x21BB" Refresh
         ]
-    , case state.list of
-        Loading -> HH.p [ cls "status-line" ] [ HH.text "Loading\x2026" ]
-        Failed err ->
-          HH.div [ cls "error-box" ]
-            [ HH.p_ [ HH.text (printAppError err) ]
-            , HH.button [ HP.type_ HP.ButtonButton, HE.onClick \_ -> Refresh ] [ HH.text "Try again" ]
-            ]
-        Loaded page ->
+    , case state.list.phase of
+        FirstLoading -> statusLine "Loading\x2026"
+        FirstFailed err -> errorBox Refresh err
+        _ ->
           HH.div_
-            [ if Array.null page.items then HH.p [ cls "status-line" ] [ HH.text "Nothing yet." ]
-              else HH.div [ cls "notif-list" ] (map (row state.now) page.items)
-            , footer page.next page.more
+            [ if Array.null state.list.items then statusLine "Nothing yet."
+              else HH.div [ cls "notif-list" ] (map (row state.now) state.list.items)
+            , pagedFooter LoadMore "That's everything." state.list
             ]
     ]
 
@@ -128,9 +120,11 @@ phrase = case _ of
 -- | Where a tap goes. The server's `status` is the liked or shared post for
 -- | a like or a share, the comment itself for a comment and the mentioning
 -- | post for a mention; a comment opens its parent so the comment is read
--- | in place. A follow, or anything without a post, opens the actor.
+-- | in place. A direct message opens the conversation with its sender. A
+-- | follow, or anything without a post, opens the actor.
 target :: Notification -> Maybe Route
 target n = case n.kind, n.tagged, n.status of
+  NDirect, _, _ -> map (\a -> Thread a.id) n.account
   NTagged, Just t, _ -> Just (StatusDetail t.statusId)
   NComment, _, Just (Status c) -> Just (StatusDetail (fromMaybe c.id c.inReplyToId))
   _, _, Just st -> Just (StatusDetail (statusId (displayed st)))
@@ -168,64 +162,42 @@ thumbnail n = case n.status of
         Nothing -> HH.text ""
   Nothing -> HH.text ""
 
-footer :: forall m. Maybe Cursor -> MoreState -> H.ComponentHTML Action () m
-footer next more = HH.div [ cls "feed-footer" ] case next, more of
-  _, LoadingMore -> [ HH.p [ cls "status-line" ] [ HH.text "Loading more\x2026" ] ]
-  _, MoreFailed err ->
-    [ HH.p_ [ HH.text (printAppError err) ]
-    , HH.button [ HP.type_ HP.ButtonButton, HE.onClick \_ -> LoadMore ] [ HH.text "Try again" ]
-    ]
-  Nothing, _ -> [ HH.p [ cls "status-line" ] [ HH.text "That's everything." ] ]
-  _, Exhausted -> [ HH.p [ cls "status-line" ] [ HH.text "That's everything." ] ]
-  Just _, Idle -> [ HH.button [ HP.type_ HP.ButtonButton, HE.onClick \_ -> LoadMore ] [ HH.text "Load more" ] ]
+handleQuery :: forall a m. MonadAff m => MonadAsk Env m => Screen.Query a -> H.HalogenM State Action () Screen.Output m (Maybe a)
+handleQuery = case _ of
+  Screen.NearBottom next -> do
+    loadMore
+    pure (Just next)
+  Screen.StatusRemoved _ next -> pure (Just next)
+  Screen.StatusUpdated _ next -> pure (Just next)
+  Screen.AccountUpdated _ next -> pure (Just next)
 
-handleAction :: forall o m. MonadAff m => MonadAsk Env m => Action -> H.HalogenM State Action () o m Unit
+handleAction :: forall m. MonadAff m => MonadAsk Env m => Action -> H.HalogenM State Action () Screen.Output m Unit
 handleAction = case _ of
   Initialize -> load
 
   Refresh -> do
-    H.modify_ _ { list = Loading }
+    H.modify_ _ { list = Paged.loading }
     load
 
-  LoadMore -> do
-    state <- H.get
-    case state.list of
-      Loaded page@{ next: Just cursor, more: Idle } -> loadMore page cursor
-      Loaded page@{ next: Just cursor, more: MoreFailed _ } -> loadMore page cursor
-      _ -> pure unit
+  LoadMore -> loadMore
 
   Open route -> liftEffect (navigate route)
 
-load :: forall o m. MonadAff m => MonadAsk Env m => H.HalogenM State Action () o m Unit
+load :: forall m. MonadAff m => MonadAsk Env m => H.HalogenM State Action () Screen.Output m Unit
 load = do
   backend <- asks _.backend
   stamp <- liftEffect now
-  result <- liftAff (notifications backend)
-  H.modify_ \s -> s
-    { now = Just stamp
-    , list = case result of
-        Left err -> Failed err
-        Right page -> Loaded { items: page.items, next: page.next, more: Idle }
-    }
+  result <- liftAff (runPager notificationsPager backend)
+  H.modify_ _ { now = Just stamp, list = Paged.first result }
 
-loadMore :: forall o m. MonadAff m => MonadAsk Env m => Loaded -> Cursor -> H.HalogenM State Action () o m Unit
-loadMore page cursor = do
-  backend <- asks _.backend
-  H.modify_ _ { list = Loaded page { more = LoadingMore } }
-  result <- liftAff (followNotifications backend cursor)
-  stamp <- liftEffect now
-  H.modify_ \s -> s
-    { now = Just stamp
-    , list = case result of
-        Left err -> Loaded page { more = MoreFailed err }
-        Right next ->
-          let
-            known = Set.fromFoldable (map _.id page.items)
-            fresh = Array.filter (\n -> not (Set.member n.id known)) next.items
-          in
-            Loaded
-              { items: page.items <> fresh
-              , next: next.next
-              , more: if Array.null fresh || next.next == Nothing then Exhausted else Idle
-              }
-    }
+loadMore :: forall m. MonadAff m => MonadAsk Env m => H.HalogenM State Action () Screen.Output m Unit
+loadMore = do
+  state <- H.get
+  case Paged.wantsMore state.list of
+    Nothing -> pure unit
+    Just pager -> do
+      backend <- asks _.backend
+      H.modify_ \s -> s { list = Paged.startMore s.list }
+      result <- liftAff (runPager pager backend)
+      stamp <- liftEffect now
+      H.modify_ \s -> s { now = Just stamp, list = Paged.more _.id result s.list }

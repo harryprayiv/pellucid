@@ -1,6 +1,7 @@
 -- | One post with its comments and a reply box. Comments are the context
 -- | endpoint's descendants, shown flat in the order the server gives them.
--- | The viewer's own post can be deleted from here, after a second tap.
+-- | The viewer's own post can be edited, and deleted after a second tap;
+-- | anyone else's can be reported.
 module Component.StatusDetail
   ( Input
   , component
@@ -8,14 +9,16 @@ module Component.StatusDetail
 
 import Prelude
 
-import App.Backend (AppError, printAppError)
+import App.Backend (printAppError)
+import App.Loadable (Loadable(..), fromEither)
 import App.Monad (Env)
 import App.Route (Route(..), goBack, navigate)
+import App.Screen as Screen
 import Control.Monad.Reader (class MonadAsk, asks)
 import Control.Parallel (parallel, sequential)
 import Data.Array as Array
 import Data.DateTime.Instant (Instant)
-import Data.Either (Either(..))
+import Data.Either (Either(..), isRight)
 import Data.Maybe (Maybe(..))
 import Data.Set (Set)
 import Data.Set as Set
@@ -32,13 +35,11 @@ import Pixelfed.Client (deleteStatus, getContext, getStatus, postReply)
 import Pixelfed.Entity (AccountId, Status(..), StatusId, captionOf, displayed, statusId)
 import Pixelfed.StatusOps (Toggle)
 import Pixelfed.StatusOps as Ops
-import View.Common (agoLabel, avatar, cls, handleName, iconButton, screenHeader)
-import View.StatusCard (CardAction(..), statusCard)
+import View.Common (agoLabel, avatar, cls, errorBox, handleName, iconButton, noticeBar, screenHeader, statusLine)
+import View.StatusCard (CardAction(..), captionView, handleCardNavigation, statusCard)
 import Web.Event.Event (Event, preventDefault)
 
 type Input = { id :: StatusId, me :: Maybe AccountId }
-
-data Loadable a = Pending | Missing AppError | Ready a
 
 type Reply = { text :: String, sending :: Boolean, error :: Maybe String }
 
@@ -69,14 +70,16 @@ data Action
   | ArmDelete
   | CancelDelete
   | ConfirmDelete
+  | Go Route
   | DismissNotice
 
-component :: forall q o m. MonadAff m => MonadAsk Env m => H.Component q Input o m
+component :: forall m. MonadAff m => MonadAsk Env m => H.Component Screen.Query Input Screen.Output m
 component = H.mkComponent
   { initialState
   , render
   , eval: H.mkEval H.defaultEval
       { handleAction = handleAction
+      , handleQuery = handleQuery
       , initialize = Just Initialize
       , receive = Just <<< Receive
       }
@@ -98,23 +101,12 @@ initialState input =
 render :: forall m. State -> H.ComponentHTML Action () m
 render state =
   HH.section [ cls "detail" ]
-    [ screenHeader Back "Post"
-        [ if isMine state then iconButton "ghost" "Delete post" "\x1F5D1" ArmDelete else HH.text ""
-        , iconButton "ghost" "Reload" "\x21BB" Reload
-        ]
+    [ screenHeader Back "Post" (headerActions state <> [ iconButton "ghost" "Reload" "\x21BB" Reload ])
     , deletePrompt state
-    , case state.notice of
-        Nothing -> HH.text ""
-        Just text ->
-          HH.div [ cls "notice" ]
-            [ HH.span_ [ HH.text text ], iconButton "ghost" "Dismiss" "\x2715" DismissNotice ]
+    , noticeBar DismissNotice state.notice
     , case state.main of
-        Pending -> HH.p [ cls "status-line" ] [ HH.text "Loading\x2026" ]
-        Missing err ->
-          HH.div [ cls "error-box" ]
-            [ HH.p_ [ HH.text (printAppError err) ]
-            , HH.button [ HP.type_ HP.ButtonButton, HE.onClick \_ -> Reload ] [ HH.text "Try again" ]
-            ]
+        Pending -> statusLine "Loading\x2026"
+        Missing err -> errorBox Reload err
         Ready status ->
           let
             id = statusId (displayed status)
@@ -132,15 +124,30 @@ render state =
               , HH.section [ cls "comments" ]
                   [ HH.h2_ [ HH.text "Comments" ]
                   , case state.comments of
-                      Pending -> HH.p [ cls "status-line" ] [ HH.text "Loading comments\x2026" ]
+                      Pending -> statusLine "Loading comments\x2026"
                       Missing err -> HH.p [ cls "error" ] [ HH.text (printAppError err) ]
-                      Ready [] -> HH.p [ cls "status-line" ] [ HH.text "No comments yet." ]
+                      Ready [] -> statusLine "No comments yet."
                       Ready comments -> HH.div [ cls "comment-list" ] (map (commentRow state) comments)
                   , if shown.commentsDisabled then HH.p [ cls "muted" ] [ HH.text "Comments are off for this post." ]
                     else replyForm state.reply
                   ]
               ]
     ]
+
+-- | The viewer's own post can be edited and deleted; anyone else's can be
+-- | reported. Nothing is offered until the post has loaded.
+headerActions :: forall m. State -> Array (H.ComponentHTML Action () m)
+headerActions state = case state.main of
+  Ready status ->
+    let
+      id = statusId (displayed status)
+    in
+      if isMine state then
+        [ iconButton "ghost" "Edit post" "\x270E" (Go (EditPost id))
+        , iconButton "ghost" "Delete post" "\x1F5D1" ArmDelete
+        ]
+      else [ iconButton "ghost" "Report post" "\x2691" (Go (ReportPost id)) ]
+  _ -> []
 
 -- | True when the main post (the displayed one, for a share) is the viewer's.
 isMine :: State -> Boolean
@@ -178,7 +185,7 @@ commentRow state comment =
               [ HH.strong_ [ HH.text (handleName c.account.displayName c.account.acct) ]
               , HH.span [ cls "card-time", HP.title c.createdAt ] [ HH.text (agoLabel state.now c.createdAt) ]
               ]
-          , HH.p [ cls "comment-text" ] [ HH.text (captionOf c) ]
+          , HH.p [ cls "comment-text" ] (captionView (Card c.id) c.mentions (captionOf c))
           , HH.div [ cls "comment-actions" ]
               [ HH.button
                   [ cls ("action action-small" <> if c.favourited then " action-active" else "")
@@ -223,9 +230,28 @@ replyForm reply =
         Nothing -> HH.text ""
     ]
 
-handleAction :: forall o m. MonadAff m => MonadAsk Env m => Action -> H.HalogenM State Action () o m Unit
+handleQuery :: forall a m. Screen.Query a -> H.HalogenM State Action () Screen.Output m (Maybe a)
+handleQuery = case _ of
+  Screen.NearBottom next -> pure (Just next)
+  Screen.StatusRemoved _ next -> pure (Just next)
+  Screen.StatusUpdated status next -> do
+    let id = statusId status
+    H.modify_ \s -> s
+      { main = case s.main of
+          Ready m -> Ready (Ops.replaceDisplayed id status m)
+          other -> other
+      , comments = case s.comments of
+          Ready cs -> Ready (Ops.replaceAll id status cs)
+          other -> other
+      }
+    pure (Just next)
+  Screen.AccountUpdated _ next -> pure (Just next)
+
+handleAction :: forall m. MonadAff m => MonadAsk Env m => Action -> H.HalogenM State Action () Screen.Output m Unit
 handleAction = case _ of
   Initialize -> load
+
+  Go route -> liftEffect (navigate route)
 
   Receive input -> do
     current <- H.gets _.input
@@ -242,12 +268,15 @@ handleAction = case _ of
   DismissNotice -> H.modify_ _ { notice = Nothing }
 
   Card id action -> case action of
-    Reveal -> H.modify_ \s -> s { revealed = Set.insert id s.revealed }
-    OpenAccount accountId -> liftEffect (navigate (Profile accountId))
     -- Already on the detail screen; the comments are below.
     OpenStatus _ -> pure unit
+    Reveal -> H.modify_ \s -> s { revealed = Set.insert id s.revealed }
     ToggleFavourite -> toggle id Ops.ToggleFavourite
     ToggleBookmark -> toggle id Ops.ToggleBookmark
+    ToggleShare -> toggle id Ops.ToggleShare
+    other -> case handleCardNavigation other of
+      Just go -> liftEffect go
+      Nothing -> pure unit
 
   SetReply text -> H.modify_ \s -> s { reply = s.reply { text = text } }
 
@@ -269,6 +298,7 @@ handleAction = case _ of
                 other -> other
             , main = adjustReplies 1 s.main
             }
+        when (isRight result) announceMain
       _ -> pure unit
 
   ArmDelete -> do
@@ -290,8 +320,11 @@ handleAction = case _ of
         result <- liftAff (deleteStatus backend (statusId (displayed main)))
         case result of
           Left err -> H.modify_ _ { deletion = NotArmed, notice = Just (printAppError err) }
-          -- The post is gone; the screen that showed it has nothing left to show.
-          Right _ -> liftEffect goBack
+          -- The post is gone. Every screen still holding it is told, then
+          -- this one leaves, since it has nothing left to show.
+          Right _ -> do
+            H.raise (Screen.StatusDeleted (statusId (displayed main)))
+            liftEffect goBack
       _, _ -> pure unit
 
   DeleteComment id -> do
@@ -309,6 +342,15 @@ handleAction = case _ of
               other -> other
           , main = adjustReplies (-1) s.main
           }
+      when (isRight result) announceMain
+
+-- | Tells the other screens the main post's comment count moved.
+announceMain :: forall m. H.HalogenM State Action () Screen.Output m Unit
+announceMain = do
+  main <- H.gets _.main
+  case main of
+    Ready st -> H.raise (Screen.StatusChanged (displayed st))
+    _ -> pure unit
 
 adjustReplies :: Int -> Loadable Status -> Loadable Status
 adjustReplies delta = case _ of
@@ -319,7 +361,7 @@ adjustReplies delta = case _ of
     Just (Status inner) -> Status top { reblog = Just (Status inner { replyCount = max 0 (inner.replyCount + delta) }) }
     Nothing -> Status top { replyCount = max 0 (top.replyCount + delta) }
 
-load :: forall o m. MonadAff m => MonadAsk Env m => H.HalogenM State Action () o m Unit
+load :: forall m. MonadAff m => MonadAsk Env m => H.HalogenM State Action () Screen.Output m Unit
 load = do
   backend <- asks _.backend
   id <- H.gets _.input.id
@@ -328,16 +370,12 @@ load = do
     Tuple <$> parallel (getStatus backend id) <*> parallel (getContext backend id)
   H.modify_ \s -> s
     { now = Just stamp
-    , main = case main of
-        Left err -> Missing err
-        Right st -> Ready st
-    , comments = case context of
-        Left err -> Missing err
-        Right ctx -> Ready ctx.descendants
+    , main = fromEither main
+    , comments = fromEither (map _.descendants context)
     }
 
 -- | Flips a like or bookmark on the main post or on a comment.
-toggle :: forall o m. MonadAff m => MonadAsk Env m => StatusId -> Toggle -> H.HalogenM State Action () o m Unit
+toggle :: forall m. MonadAff m => MonadAsk Env m => StatusId -> Toggle -> H.HalogenM State Action () Screen.Output m Unit
 toggle id which = do
   state <- H.get
   let
@@ -351,16 +389,19 @@ toggle id which = do
       backend <- asks _.backend
       H.modify_ \s -> s { busy = Set.insert id s.busy }
       result <- liftAff (Ops.request which st backend id)
-      H.modify_ \s -> s
-        { busy = Set.delete id s.busy
-        , notice = case result of
-            Left err -> Just (printAppError err)
-            Right _ -> s.notice
-        , main = case result, s.main of
-            Right fromServer, Ready m -> Ready (Ops.replaceDisplayed id (Ops.merge which st fromServer) m)
-            _, m -> m
-        , comments = case result, s.comments of
-            Right fromServer, Ready cs -> Ready (Ops.replaceAll id (Ops.merge which st fromServer) cs)
-            _, cs -> cs
-        }
+      case result of
+        Left err -> H.modify_ \s -> s { busy = Set.delete id s.busy, notice = Just (printAppError err) }
+        Right fromServer -> do
+          let merged = Ops.merge which st fromServer
+          H.modify_ \s -> s
+            { busy = Set.delete id s.busy
+            , main = case s.main of
+                Ready m -> Ready (Ops.replaceDisplayed id merged m)
+                other -> other
+            , comments = case s.comments of
+                Ready cs -> Ready (Ops.replaceAll id merged cs)
+                other -> other
+            }
+          -- Screens underneath that show the same post take the new copy.
+          H.raise (Screen.StatusChanged merged)
     _ -> pure unit

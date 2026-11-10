@@ -3,3 +3,6 @@ output
 target/*
 src-tauri/icons/*
 .psc-ide-port
+dist
+dist/index.js
+dist/style.css

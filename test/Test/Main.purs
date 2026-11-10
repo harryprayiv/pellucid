@@ -2,7 +2,10 @@
 -- | including the lenient paths: string counters, null `content_text`, the
 -- | empty `liked_by` form, a share wrapper, a sparse remote account, a
 -- | notification with an unknown verb and an unreadable status, compose
--- | settings with a comma-joined type list, and a fresh upload with no url.
+-- | settings with a comma-joined type list, a fresh upload with no url,
+-- | lists that carry `false` and `[]` in place of an entry, and direct
+-- | messages as both Pixelfed 0.12 and 0.15 send them. The pure machines
+-- | are tested in `Test.Pure`.
 module Test.Main (main) where
 
 import Prelude
@@ -12,14 +15,15 @@ import Data.Argonaut.Parser (jsonParser)
 import Data.Array as Array
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (instant)
-import Data.Either (Either(..))
 import Data.Maybe (Maybe(..), isJust)
+import Data.Time.Duration (Milliseconds(..))
 import Effect (Effect)
 import Effect.Console (log)
-import Effect.Exception (throw)
-import Pixelfed.Decode (decodeComposeSettings, decodeContext, decodeMedia, decodeNotifications, decodeRelationships, decodeStatuses)
-import Pixelfed.Entity (AccountId(..), MediaId(..), MediaType(..), NotificationId(..), NotificationKind(..), PfType(..), Status(..), StatusId(..), Visibility(..), displayed, statusId)
-import Data.Time.Duration (Milliseconds(..))
+import Pixelfed.Decode (decodeComposeSettings, decodeContext, decodeConversations, decodeHashtag, decodeHashtags, decodeMedia, decodeMessage, decodeNotifications, decodeRelationships, decodeSearch, decodeStatuses, decodeThread, decodeTrendingTags)
+import Pixelfed.Entity (AccountId(..), MediaId(..), MediaType(..), MessageId(..), NotificationId(..), NotificationKind(..), PfType(..), Status(..), StatusId(..), Visibility(..), displayed, statusId)
+import Pixelfed.StatusOps (Toggle(..), canShare, merge, removeStatus)
+import Test.Check (check, either', maybe')
+import Test.Pure as Pure
 import Util.Time (parseIso, relativeLabel)
 
 foreign import fixture :: String
@@ -33,6 +37,20 @@ foreign import notificationsFixture :: String
 foreign import composeSettingsFixture :: String
 
 foreign import mediaUploadFixture :: String
+
+foreign import searchFixture :: String
+
+foreign import hashtagFixture :: String
+
+foreign import followedTagsFixture :: String
+
+foreign import trendingTagsFixture :: String
+
+foreign import conversationsFixture :: String
+
+foreign import threadFixture :: String
+
+foreign import messageSentFixture :: String
 
 main :: Effect Unit
 main = do
@@ -131,17 +149,68 @@ main = do
   check "null meta gives no dims" (uploaded.dimensions == Nothing)
   check "null description" (uploaded.description == Nothing)
 
-  log "all decoder tests passed"
+  -- The toggle merge rules, on the first fixture status.
+  let liked = Status first
+  let Status afterBookmark = merge ToggleBookmark liked (Status first { bookmarked = true, contentText = Nothing })
+  check "bookmark merge takes only the flag" (afterBookmark.bookmarked && afterBookmark.contentText == first.contentText)
+  let Status afterShare = merge ToggleShare liked (Status first { reblogged = true, reblogsCount = 0, contentText = Nothing })
+  check "share merge takes the flag and moves the count by one"
+    (afterShare.reblogged && afterShare.reblogsCount == first.reblogsCount + 1 && afterShare.contentText == first.contentText)
+  let Status afterUnshare = merge ToggleShare (Status afterShare) (Status first { reblogged = false })
+  check "unshare moves the count back" (not afterUnshare.reblogged && afterUnshare.reblogsCount == first.reblogsCount)
+  let Status sameShare = merge ToggleShare liked (Status first { reblogsCount = 99 })
+  check "an unchanged share flag leaves the count" (sameShare.reblogsCount == first.reblogsCount)
+  let Status afterLike = merge ToggleFavourite liked (Status first { favourited = false, favouritesCount = 11 })
+  check "favourite merge takes the server's copy" (not afterLike.favourited && afterLike.favouritesCount == 11)
+  check "a public post can be shared" (canShare liked)
+  check "an unlisted post cannot be shared" (not (canShare (displayed second)))
+  check "removing the inner post removes its share wrapper"
+    (map statusId (removeStatus (StatusId "700000000000000001") statuses) == [ StatusId "812345678901234567" ])
 
-check :: String -> Boolean -> Effect Unit
-check label ok = if ok then log ("ok   " <> label) else throw ("FAIL " <> label)
+  searchJson <- either' "search fixture is not JSON" (jsonParser searchFixture)
+  found <- either' "decodeSearch" (lmap printJsonDecodeError (decodeSearch searchJson))
+  check "search: unreadable accounts are dropped" (map _.acct found.accounts == [ "bob", "carol@remote.example" ])
+  check "search: two hashtags" (map _.name found.hashtags == [ "sunset", "Sunrise" ])
+  check "search: hashtag count" ((_.count =<< Array.index found.hashtags 0) == Just 1204)
+  check "search: string count" ((_.count =<< Array.index found.hashtags 1) == Just 0)
+  check "search: hashtags are not followed by default" (Array.all (not <<< _.following) found.hashtags)
 
-either' :: forall a. String -> Either String a -> Effect a
-either' label = case _ of
-  Left err -> throw (label <> ": " <> err)
-  Right a -> pure a
+  tagJson <- either' "hashtag fixture is not JSON" (jsonParser hashtagFixture)
+  tag <- either' "decodeHashtag" (lmap printJsonDecodeError (decodeHashtag tagJson))
+  check "hashtag: following and count" (tag.following && tag.count == Just 1204 && tag.name == "sunset")
 
-maybe' :: forall a. String -> Maybe a -> Effect a
-maybe' label = case _ of
-  Nothing -> throw (label <> ": missing")
-  Just a -> pure a
+  followedJson <- either' "followed tags fixture is not JSON" (jsonParser followedTagsFixture)
+  followed <- either' "decodeHashtags" (lmap printJsonDecodeError (decodeHashtags followedJson))
+  check "followed tags: the empty entry is dropped" (map _.name followed == [ "sunset", "film" ])
+  check "followed tags: no count without _pe" (Array.all (\t -> t.count == Nothing && t.following) followed)
+
+  trendingJson <- either' "trending tags fixture is not JSON" (jsonParser trendingTagsFixture)
+  trending <- either' "decodeTrendingTags" (lmap printJsonDecodeError (decodeTrendingTags trendingJson))
+  check "trending: bare names, with and without the hashtag field" (map _.name trending == [ "sunset", "film" ])
+  check "trending: totals as number and string" (map _.total trending == [ 88, 41 ])
+
+  convJson <- either' "conversations fixture is not JSON" (jsonParser conversationsFixture)
+  convs <- either' "decodeConversations" (lmap printJsonDecodeError (decodeConversations convJson))
+  check "conversations: the one without a last message is dropped" (Array.length convs == 2)
+  check "conversations: string and numeric ids" (map _.id convs == [ "501", "77" ])
+  check "conversations: unread flag" (map _.unread convs == [ true, false ])
+  check "conversations: content_text wins" ((map _.lastText (Array.index convs 0)) == Just "See you at eight")
+  check "conversations: HTML content is reduced to text" ((map _.lastText (Array.index convs 1)) == Just "Thanks & bye")
+  check "conversations: the other participant" ((map _.acct <<< Array.head <<< _.accounts =<< Array.index convs 1) == Just "carol@remote.example")
+
+  threadJson <- either' "thread fixture is not JSON" (jsonParser threadFixture)
+  thread <- either' "decodeThread" (lmap printJsonDecodeError (decodeThread threadJson))
+  check "thread: the other person" (thread.id == AccountId "7" && thread.username == "bob" && thread.name == "Bob")
+  check "thread: a message without an id is dropped" (map _.id thread.messages == [ MessageId "9100", MessageId "9099" ])
+  check "thread: authorship" (map _.isAuthor thread.messages == [ false, true ])
+  check "thread: a photo carries its media and no text"
+    ((map (\m -> { kind: m.kind, text: m.text, media: m.media }) (Array.index thread.messages 1)) == Just { kind: "photo", text: "", media: Just "https://pixelfed.social/storage/m/dm/9099.jpg" })
+  check "thread: created_at with an offset parses" (Array.all (isJust <<< parseIso <<< _.createdAt) thread.messages)
+
+  sentJson <- either' "sent message fixture is not JSON" (jsonParser messageSentFixture)
+  sent <- either' "decodeMessage" (lmap printJsonDecodeError (decodeMessage sentJson))
+  check "sent message: 0.12 omits created_at" (sent.id == MessageId "9101" && sent.createdAt == "" && sent.timeAgo == "1s" && sent.isAuthor)
+
+  Pure.run
+
+  log "all tests passed"
