@@ -63,6 +63,27 @@
         pkgs.xdg-utils
       ];
 
+      # WebKitGTK plays <video> and <audio> through GStreamer and finds its
+      # plugins at run time on GST_PLUGIN_SYSTEM_PATH_1_0. Nothing in
+      # tauriLinuxLibs puts a plugin on that path, so without this list the
+      # webview has only the plugins the host session happens to export, built
+      # from whatever nixpkgs the host is on.
+      #   base   playbin and the audio and video converters
+      #   good   the MP4 and Matroska demuxers, VP8 and VP9, the audio sinks
+      #   bad    the H.264 and H.265 parsers, and the WebVTT encoder WebKit
+      #          looks for every time a media element loads
+      #   libav  the H.264 and AAC decoders
+      gstreamerPlugins = pkgs: [
+        pkgs.gst_all_1.gstreamer
+        pkgs.gst_all_1.gst-plugins-base
+        pkgs.gst_all_1.gst-plugins-good
+        pkgs.gst_all_1.gst-plugins-bad
+        pkgs.gst_all_1.gst-libav
+      ];
+
+      gstPluginPath = pkgs:
+        pkgs.lib.makeSearchPathOutput "lib" "lib/gstreamer-1.0" (gstreamerPlugins pkgs);
+
       gsettingsPath = pkgs:
         "${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:"
         + "${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}";
@@ -80,10 +101,13 @@
               pkgs.cargo-tauri
               pkgs.pkg-config
               pkgs.gobject-introspection
-            ] ++ tauriLinuxLibs pkgs;
+            ] ++ tauriLinuxLibs pkgs ++ gstreamerPlugins pkgs;
 
             shellHook = ''
               export XDG_DATA_DIRS="${gsettingsPath pkgs}:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+              # The webview's media plugins come from this flake and from nowhere
+              # else, so they match the GStreamer that WebKitGTK is linked to.
+              export GST_PLUGIN_SYSTEM_PATH_1_0="${gstPluginPath pkgs}"
               # WebKitGTK loads TLS support from glib-networking at runtime; without
               # this the webview cannot fetch https images.
               export GIO_MODULE_DIR="${pkgs.glib-networking}/lib/gio/modules/"

@@ -37,8 +37,11 @@
 -- FACTS THIS SPEC IS WRITTEN AGAINST. Checked 2026-11-09 and 2026-11-10 in
 -- the source of pixelfed/pixelfed (dev at 6e92465, version 0.15.2, and tag
 -- v0.12.5 for what older instances do) and pixelfed/pixelfed-rn (main at
--- da4bcf7). Nothing below was observed on a running server; KnownIssue
--- lab_instance_undeployed.
+-- da4bcf7). Before the first login to a real Pixelfed account, from
+-- winsmuth on 2026-11-10, nothing below had been observed on a running
+-- server. The two facts observed since are marked OBSERVED, one under
+-- Entities and one under Tooling. Everything else is still from the source
+-- alone (KnownIssue lab_instance_undeployed).
 --
 --   Transport and login
 --   - config/cors.php sets allowed_origins to [] unless the operator sets
@@ -168,6 +171,27 @@
 --     mentioning post for a mention, and absent for a follow.
 --
 --   Entities
+--   - A transformer either casts a field or passes the database row's
+--     value through. StatusTransformer, AccountTransformer and
+--     RelationshipTransformer cast their ids with (string) and their
+--     flags with (bool). What they pass through uncast: favourites_count
+--     (likes_count), visibility (scope, else visibility; can be null) and
+--     content_text (caption; can be null).
+--   - MediaTransformer casts id and nothing else. is_nsfw is the media
+--     row's column, which the Media model does not cast: 0 or 1 from the
+--     database, null on a fresh upload whose model was never read back.
+--     meta.original.width and height are the row's values too, numbers or
+--     strings depending on the database driver. OBSERVED 2026-11-10: on a
+--     real server the first attachment of the first home timeline post
+--     carried an is_nsfw that was neither a boolean nor null.
+--   - NotificationTransformer's tagged is { username, post_url,
+--     status_id, profile_id }, with status_id and profile_id as bare
+--     numbers from the media_tags row. A Pixelfed id is larger than
+--     2^53 - 1, so JSON.parse has already rounded status_id by the time
+--     the client reads it. post_url is the tagged post's url, which for a
+--     post made on that server ends in the same id as text.
+--   - The home timeline (dev) drops, on the server, a post with no
+--     account.id and a share with no inner post before it answers.
 --   - Counters have shipped as numbers, as strings and as null.
 --   - liked_by is { username: null, others: false } when there is nobody
 --     to show.
@@ -186,6 +210,17 @@
 --     Element.scrollHeight are in purescript-web-html and
 --     purescript-web-dom; no foreign module is needed to read or set the
 --     scroll position.
+--   - WebKitGTK plays <video> and <audio> through GStreamer and finds
+--     plugins at run time on GST_PLUGIN_SYSTEM_PATH_1_0. In the locked
+--     nixpkgs (webkitgtk 2.54.2, GStreamer 1.28.8) it is built against
+--     gst-plugins-base and gst-plugins-bad and propagates neither, so a
+--     shell that lists only webkitgtk puts no plugin on that path. When a
+--     media element loads and the webvttenc element (gst-plugins-bad) is
+--     not found, WebKit logs one line about a missing WebVTT encoder. A
+--     feed video is rendered with preload=metadata, so it loads as soon
+--     as it is drawn. OBSERVED 2026-11-10 on winsmuth: sixteen such lines
+--     in one run of cargo tauri dev from a shell with no GStreamer
+--     package in it.
 --
 -- DECISIONS. D1 to D22 were taken 2026-11-09; D23 to D32 on 2026-11-10.
 --
@@ -208,11 +243,22 @@
 --       not used anywhere.
 --   D7. NO NPM. The frontend is spago packages plus two hand-written
 --       foreign modules, both listed in contract ForeignBudget.
---   D8. PIXELFED ENTITIES, LENIENTLY DECODED. Every read sends _pe=1.
---       Decoders default every field Pixelfed has ever omitted or nulled,
---       read counters from numbers and strings, and keep unknown
---       visibilities, pf_types, media types and notification verbs as
---       data.
+--   D8. ONLY WHAT IDENTIFIES A THING CAN FAIL ITS DECODE. Every read
+--       sends _pe=1. A post needs its id and its account; an account, and
+--       a mention, its id and username; an attachment, a notification, a
+--       relationship, a message and a thread their id; a conversation
+--       its id and its last message; a hashtag its name. Every other
+--       field is read by a reader that accepts each encoding the server
+--       uses and falls back to a default for anything else: a flag is
+--       true or false, 1 or 0, or one of those in a string; a number is a
+--       number or a string of digits; a text field that is absent, null
+--       or of another type is empty or absent. An id is a string, or a
+--       whole number no larger than
+--       2^53 - 1; a larger number has lost its last digits in JSON.parse
+--       and is refused, because what is left names another post. Unknown
+--       visibilities, pf_types, media types and notification verbs are
+--       kept as data. One field of an unexpected type never takes a
+--       timeline with it (KnownIssue uncast_fields_failed_the_timeline).
 --   D9. THE SERVER IS THE TRUTH FOR TOGGLES. A like, bookmark or share
 --       shows the old state until the server answers. The favourite
 --       endpoints return the Pixelfed entity, which replaces ours; the
@@ -280,10 +326,14 @@
 --        e-mail addresses and URL fragments as text.
 --   D28. LISTS OF ACCOUNTS, HASHTAGS AND MESSAGES DROP WHAT THEY CANNOT
 --        READ. The server itself filters such lists and has shipped false
---        and [] in place of an entry. A list of posts stays strict: a
---        post that lacks id, uri, created_at or its account fails the
---        page with an error the person sees and can retry, so a post
---        never goes missing without a trace.
+--        and [] in place of an entry. The lists inside a post
+--        (attachments, tags, mentions) do the same. A list of posts and
+--        the list of notifications stay strict about what D8 requires: a
+--        post that cannot be identified, or a share whose inner post
+--        cannot, fails the page with an error that names the index and
+--        the field, which the person sees and can retry, so a post never
+--        goes missing without a trace. A notification's actor or post
+--        that cannot be read is absent from the row instead.
 --   D29. WHAT CANNOT BE UNDONE ASKS FIRST, IN THE PAGE. Deleting a post,
 --        blocking an account and logging out each take a second tap on a
 --        confirmation strip. No window.confirm(): a native dialog blocks
@@ -301,7 +351,8 @@
 --        search at 100. Each is the server's own validation rule; where
 --        versions differ the lower one is used.
 --
--- IMPLEMENTATION STATUS at the fourth batch, 2026-11-10:
+-- IMPLEMENTATION STATUS at 2026-11-10 (the fourth batch and, later the
+-- same day, the decoder revision that followed the first real login):
 --
 --   BUILT      D2 to D9, D11, D13 to D15, D17, D19 to D32. Every rule in
 --              this file. Surfaces Platform, InstanceAnswers, Bridge,
@@ -310,8 +361,9 @@
 --              ProfileScreen, ThreadScreen, NotificationsScreen,
 --              ComposeScreen, SettingsScreen, DevShell. The Rust core has
 --              22 unit tests;
---              the PureScript side has 162 checks (decoders against
---              fixtures shaped like the server's transformers, the paging
+--              the PureScript side has 184 checks (decoders against
+--              fixtures shaped like the server's transformers, uncast
+--              fields included, and against loose payloads; the paging
 --              machine, the navigation stack, the route codec, caption
 --              links, the merge rules); the bundled UI passes a 122-step
 --              headless run against a mock of contract Shell (KnownIssue
@@ -511,6 +563,8 @@ value Notification {
     actor_id: String?
     status_id: String?
     in_reply_to_id: String?
+    -- The last segment of tagged.post_url when that is a number, else
+    -- tagged.status_id when it arrived exact, else absent (D8).
     tagged_status_id: String?
 }
 
@@ -1232,9 +1286,9 @@ default KnownIssue android_shell_untested = {
 }
 
 default KnownIssue lab_instance_undeployed = {
-    name: "the client has never spoken to a running server",
+    name: "the client has spoken to a running server for a login and one timeline request only",
     status: open,
-    effect: "every fact in this file comes from reading Pixelfed's source, and every screen has run only against a mock of contract Shell. A fact read wrongly surfaces on the first real request",
+    effect: "every fact in this file but one comes from reading Pixelfed's source, and every screen has run to the end only against a mock of contract Shell. On 2026-11-10 a login to a real account succeeded and the first timeline request failed to decode (KnownIssue uncast_fields_failed_the_timeline). A fact read wrongly surfaces on the first real request that depends on it",
     closes_when: "the lab module is deployed on blade, a user created with pixelfed-manage, and login, a timeline, an upload, a post, a search and a direct message have each been done from Pellucid against it"
 }
 
@@ -1292,6 +1346,20 @@ default KnownIssue rename_reached_the_nodeinfo_check = {
     status: closed,
     effect: "instance.rs compared nodeinfo's software.name with pellucid, so every Pixelfed server was refused at the probe with Unsupported server before login began. No test covered the comparison and every UI run mocked the shell, so the gate passed. domain.rs also suggested pellucid.social in its error messages",
     closes_when: "the comparison is against SERVER_SOFTWARE = pixelfed in a function with no network, and a unit test refuses the app's own name. Closed 2026-11-10; found by reading instance.rs after the first cargo tauri dev, not by the spec check, which had been done without that file"
+}
+
+default KnownIssue uncast_fields_failed_the_timeline = {
+    name: "a flag sent as a number failed the whole home timeline",
+    status: closed,
+    effect: "the decoders read every optional field with one type in mind and failed the value on any other. MediaTransformer sends is_nsfw as the database holds it, so the first attachment of the first post failed its post, the post failed the page, and the home screen of a real account showed a decode error in place of the feed. The fixtures had been written with true and false where the server sends 0 and 1, so 162 checks and the headless run passed",
+    closes_when: "every field that does not identify its entity is read by a reader that cannot fail (D8), the fixtures carry is_nsfw as 0, 1 and null and a tagged status_id as a bare number, and a post reduced to its id and account decodes. Closed 2026-11-10; found by Harry on the first real login, not by any check here. Putting the strict read back fails the suite"
+}
+
+default KnownIssue video_playback_unseen = {
+    name: "no video has been seen playing in the desktop shell",
+    status: open,
+    effect: "the dev shell listed no GStreamer plugin, so what the webview could play depended on plugins the host session exported, and WebKit logged a missing WebVTT encoder once per feed video. The flake now lists the plugins and sets their path. That change was parsed and its attributes evaluated against the locked nixpkgs. It has not been built or run, and nobody has yet watched a video play",
+    closes_when: "from the dev shell on winsmuth, cargo tauri dev no longer prints the WebVTT line and a video in the home feed plays with sound"
 }
 
 default KnownIssue back_on_first_screen_did_nothing = {
@@ -2183,7 +2251,8 @@ rule NotificationOpened {
 
     @guidance
         -- notification_target, first match: a direct message opens the
-        -- thread with its sender; a tag opens tagged_status_id; a comment
+        -- thread with its sender; a tag that carries a tagged_status_id
+        -- opens it; a comment
         -- opens its parent (in_reply_to_id, else the comment) so it is
         -- read in place; anything else with a post opens that post;
         -- anything else with an actor opens the actor; a row with neither
@@ -2459,6 +2528,12 @@ surface InstanceAnswers {
     @guarantee AnswersAreData
         -- Nothing an instance sends is executed or rendered as markup. A
         -- body that does not decode is AppError decode, shown as text.
+
+    @guarantee OnlyIdentityFailsADecode
+        -- D8. A field that does not identify its entity cannot produce
+        -- AppError decode, whatever type it arrives as. The error text
+        -- names the path to the field that did: the index in the page,
+        -- then each key.
 }
 
 -- What the UI asks of the shell. Every screen's request goes through
@@ -2841,10 +2916,15 @@ surface DevShell {
         -- purs-backend-es, purescript-language-server, esbuild, nodejs,
         -- rust stable with rust-src and rust-analyzer, cargo-tauri,
         -- pkg-config, gobject-introspection, WebKitGTK 4.1 and GTK 3 and
-        -- their libraries, glib-networking, xdg-utils. Commands: nix
-        -- develop; spago build, spago test, spago bundle; cargo tauri icon
-        -- <png> once; cargo tauri dev; fish scripts/check.fish. The session
-        -- file lands in ~/.local/share/com.harryprayiv.pellucid/.
+        -- their libraries, glib-networking, xdg-utils, and GStreamer with
+        -- gst-plugins-base, -good, -bad and gst-libav. The shell sets
+        -- GST_PLUGIN_SYSTEM_PATH_1_0 to exactly those five, so the
+        -- webview's media plugins are the flake's and match the GStreamer
+        -- WebKitGTK is linked to (KnownIssue video_playback_unseen).
+        -- Commands: nix develop; spago build, spago test, spago bundle;
+        -- cargo tauri icon <png> once; cargo tauri dev; fish
+        -- scripts/check.fish. The session file lands in
+        -- ~/.local/share/com.harryprayiv.pellucid/.
         -- devShells.android adds the Android SDK 34, NDK 26.1.10909125,
         -- JDK 17 and the four Android Rust targets (KnownIssue
         -- android_shell_untested).
