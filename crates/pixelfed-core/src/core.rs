@@ -41,13 +41,19 @@ pub struct PendingLogin {
 }
 
 impl Core {
+    /// A saved session that cannot be read counts as no session: the app
+    /// starts signed out, and the file stays where it is until a sign-in
+    /// replaces it or a logout removes it. Failing here would leave an app
+    /// that does not open and offers nothing to repair itself with. A release
+    /// build meets this case when the file was written by a development build
+    /// signed in to a server on this machine (see `Domain`).
     pub fn new(store: Box<dyn SecretStore>) -> Result<Core, AppError> {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()?;
-        let session = store.load()?;
+        let session = store.load().unwrap_or(None);
         Ok(Core {
             http,
             store,
@@ -174,4 +180,32 @@ async fn verify_credentials(http: &reqwest::Client, session: &Session) -> Result
         id: account.id,
         acct: account.acct,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Unreadable;
+
+    impl SecretStore for Unreadable {
+        fn load(&self) -> Result<Option<Session>, AppError> {
+            Err(AppError::storage("session file is corrupt"))
+        }
+
+        fn save(&self, _session: &Session) -> Result<(), AppError> {
+            Ok(())
+        }
+
+        fn clear(&self) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_session_that_cannot_be_read_starts_the_app_signed_out() {
+        let core = Core::new(Box::new(Unreadable)).unwrap();
+        assert_eq!(core.session_summary(), None);
+        assert!(matches!(core.current(), Err(AppError::NoSession)));
+    }
 }

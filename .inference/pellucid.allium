@@ -225,7 +225,7 @@
 --     package in it.
 --
 -- DECISIONS. D1 to D22 were taken 2026-11-09; D23 to D32 on 2026-11-10;
--- D33 on 2026-11-11.
+-- D33 and D34 on 2026-11-11.
 --
 --   D1. SCOPE. A client for the existing Pixelfed protocol first. The
 --       server is a later project with its own spec.
@@ -240,7 +240,9 @@
 --   D4. THE TOKEN GOES ONLY TO /api/ PATHS ON THE LOGGED-IN ORIGIN. A
 --       request path must start with /api/. A pagination cursor is used
 --       only after Rust parses it and checks scheme, host, port and path.
---   D5. HTTPS ONLY. There is no insecure mode and none is planned.
+--   D5. HTTPS ONLY. There is no insecure mode and none is planned. D34
+--       makes one exception, for development builds and for the address
+--       127.0.0.1 alone.
 --   D6. NO HTML IS RENDERED AS HTML. Captions are content_text; where a
 --       server omits it the HTML content is reduced to text. innerHTML is
 --       not used anywhere.
@@ -362,18 +364,41 @@
 --        same client API, and where its answers differ from Pixelfed's
 --        they are the stricter form (every id a string, every flag a
 --        boolean), which the decoders of D8 already read.
+--   D34. A DEVELOPMENT BUILD REACHES A SERVER ON ITS OWN MACHINE OVER
+--        PLAIN HTTP. Typed with its scheme and by its address, as in
+--        http://127.0.0.1:8080, a server is reached over http by a build
+--        with debug assertions (cargo tauri dev, cargo test). A build
+--        without them refuses that text where it is typed and where it
+--        is read back from a saved session, so a release binary cannot
+--        hold such a domain at all. The reason is D5's own: a request to
+--        127.0.0.1 does not leave the machine, so there is no network to
+--        read the token from. The other way to reach a local server,
+--        trusting a private certificate authority, would open more than
+--        this does, because the core trusts only the authorities
+--        compiled into it and would need a way to be told about others.
+--        Nothing is downgraded. http:// in front of any other host is
+--        reached over https as before; that covers the name localhost,
+--        which is whatever the resolver says it is, and the rest of
+--        127.0.0.0/8, which the webview's policy cannot name. 127.0.0.1
+--        typed without a scheme is https too. The domain is stored and
+--        shown with its scheme, so the settings screen says what the
+--        session talks to. What the exception costs: on a machine with
+--        other users, whoever binds the port is the server, and receives
+--        the password typed into the consent page and the token after
+--        it.
 --
--- IMPLEMENTATION STATUS at 2026-11-10 (the fourth batch and, later the
--- same day, the decoder revision that followed the first real login):
+-- IMPLEMENTATION STATUS at 2026-11-11 (the fourth batch, the decoder
+-- revision that followed the first real login, then D33 and D34):
 --
---   BUILT      D2 to D9, D11, D13 to D15, D17, D19 to D32. Every rule in
+--   BUILT      D2 to D9, D11, D13 to D15, D17, D19 to D34. Every rule in
 --              this file. Surfaces Platform, InstanceAnswers, Bridge,
 --              LoginScreen, SignedInShell, TimelineScreen, TagFeedHeader,
 --              ListScreens, PostDetailScreen, FormScreens, ExploreScreen,
 --              ProfileScreen, ThreadScreen, NotificationsScreen,
 --              ComposeScreen, SettingsScreen, DevShell. The Rust core has
---              23 unit tests, one of them for the Pellucid server's
---              name and floor (D33, 2026-11-11);
+--              30 unit tests, one of them for the Pellucid server's
+--              name and floor (D33), six for D34 as both kinds of build
+--              apply it, and one for a session file that cannot be read;
 --              the PureScript side has 184 checks (decoders against
 --              fixtures shaped like the server's transformers, uncast
 --              fields included, and against loose payloads; the paging
@@ -382,6 +407,33 @@
 --              headless run against a mock of contract Shell (KnownIssue
 --              smoke_harness_external). The shell crate compiles and is
 --              clippy-clean.
+--   RUN        2026-11-11, against a pellucid-server on the same machine
+--              at http://127.0.0.1:8080 (D34), where this spec is
+--              written and not on winsmuth. The core alone: probe,
+--              sign-in through the server's consent page, 25 uploads and
+--              posts, two pages of the home timeline by cursor, four
+--              cursors to other origins refused before the network, the
+--              session read back from its file. Then the desktop shell
+--              itself, the debug binary on a display with no screen
+--              (WebKitGTK 2.52.6), driven by synthetic pointer and
+--              keyboard: the address typed into the login screen, the
+--              consent page answered by a script standing in for the
+--              browser, the feeds with their pictures, a profile and its
+--              grid, a follow, a post's own screen, the composer's limits
+--              as the server states them, and the settings screen naming
+--              the session as http://127.0.0.1:8080. A like, Alerts and
+--              Explore show the server's 404, which is what a server
+--              without those routes should produce. The same binary
+--              built without devCsp showed every picture as a blocked
+--              box. Not run: choosing a file in the composer (the file
+--              dialog did not take a path from a synthetic keyboard), so
+--              an upload has gone through the core and not through the
+--              webview; and cargo tauri dev, which may serve the page
+--              from the command's own web server where the binary run
+--              here served it through Tauri's protocol. The core's 30
+--              tests also pass compiled as a release build, in which the
+--              address of D34 is refused and a saved session carrying it
+--              does not read back.
 --   PARTIAL    D10: the desktop redirect is built and tested; the deep
 --              link branch is not written. D12: FileStore only. D16: the
 --              module is written and parses; it has not been deployed.
@@ -429,10 +481,12 @@ value Bytes {}
 -- A validated host. parse accepts an optional scheme, trailing slashes
 -- and mixed case, rejects paths, queries, userinfo and hosts without a
 -- dot (localhost excepted), lower-cases, and keeps an explicit port. The
--- base URL is always https (D5).
+-- base URL is https (D5) unless plain_http is set, which only D34 sets:
+-- then the base URL is http and the stored text carries the scheme.
 value Domain {
     host: String
     port: Integer?
+    plain_http: Boolean
 }
 
 -- An absolute URL taken from a Link header. The UI holds it as a string
@@ -663,8 +717,18 @@ contract CoreApi {
         -- sends code_verifier (tested against RFC 7636 appendix B).
 
     @invariant CursorsValidated
-        -- api_follow parses the URL and requires https, the session
-        -- domain's host and port, and a path under /api/.
+        -- api_follow parses the URL and requires the session domain's
+        -- scheme, host and port, and a path under /api/. The scheme is
+        -- https for every domain but the one D34 allows, and for that
+        -- one an https cursor is refused like any other foreign origin.
+
+    @invariant UnreadableSessionIsNoSession
+        -- Core::new takes a session the store cannot read as no session
+        -- and leaves the file where it is; the next sign-in replaces it
+        -- and a logout removes it. A release build meets this when the
+        -- file was written by a development build signed in under D34.
+        -- Before 2026-11-11 Core::new failed instead, the shell's setup
+        -- failed with it, and the process ended before a window existed.
 
     @invariant RedirectsDropTheToken
         -- reqwest follows at most five redirects and removes
@@ -726,7 +790,13 @@ contract Shell {
         -- script-src 'self'; style-src 'self'; img-src 'self' https: data:
         -- blob:; media-src https: blob:; connect-src ipc:
         -- http://ipc.localhost; font-src 'self'; object-src 'none';
-        -- base-uri 'none'. Capability default: core:default only.
+        -- base-uri 'none'. devCsp is the same policy with
+        -- http://127.0.0.1:* added to img-src and media-src (D34). Tauri
+        -- applies devCsp in a build without its custom-protocol feature,
+        -- which is what cargo tauri dev and a plain cargo build produce,
+        -- and csp in what cargo tauri build produces. cargo tauri build
+        -- --debug therefore accepts the address of D34 and shows no
+        -- picture from it. Capability default: core:default only.
         -- Nothing in the fourth batch added a command: every new screen
         -- goes through api_request and api_follow.
 }
@@ -1382,7 +1452,7 @@ default KnownIssue video_playback_unseen = {
 default KnownIssue client_refuses_this_server = {
     name: "the client has not signed in to a Pellucid server",
     status: open,
-    effect: "check_software accepts the name pellucid as of 2026-11-11 (D33), and every answer of a two-account session against a running pellucid-server was read by the decoders and by the core's structs. What is left is reach: the client is https only (D5) and its TLS trusts the public certificate authorities compiled into it and no others, so it cannot reach a server on a developer's machine, and no server is deployed",
+    effect: "check_software accepts the name pellucid (D33), and a development build reaches a server on its own machine (D34). On 2026-11-11, where this spec is written, the debug binary of the desktop shell signed in to a pellucid-server at http://127.0.0.1:8080 through its own login screen and showed the feeds, a profile, a follow and a post with their pictures; uploads and posts went through the core (status RUN). What is left: the same on winsmuth with a real browser and a file chosen in the composer, and a release build, which is https only (D5), trusts the public certificate authorities compiled into it and no others, and so needs a deployed server, of which there is none",
     closes_when: "a session against a deployed pellucid-server has signed in, posted a photo and read it back. The same entry is in pellucid-server.allium"
 }
 
@@ -1437,17 +1507,25 @@ rule StartedLoggedOut {
     ensures:
         app.status = logged_out
         app.wanted = parse_route(hash)
+
+    @guidance
+        -- stored is null when there is no session file and also when
+        -- there is one that cannot be read (CoreApi
+        -- UnreadableSessionIsNoSession).
 }
 
 rule BootFailed {
-    when: StoreUnreadable(_, message)
+    when: SessionUnanswered(_, message)
     requires: app.status = booting
     ensures:
         app.status = boot_failed
         app.boot_error = message
 
     @guidance
-        -- The one state with no button: the fix is outside the app.
+        -- The shell did not answer session_get. The one state with no
+        -- button: the fix is outside the app. Until 2026-11-11 this rule
+        -- was written for an unreadable session file, which the shell
+        -- could never bring this far: its setup failed first.
 }
 
 rule LoginStarted {
@@ -1616,13 +1694,15 @@ rule RequestSent {
 rule CursorFollowed {
     when: CursorDereferenced(_, cursor)
     requires: core.session != null
-    requires: is_https(cursor.url) and same_origin(cursor.url, core.session.domain)
+    requires: same_origin(cursor.url, core.session.domain)
     requires: starts_with(path_of(cursor.url), "/api/")
     ensures: RequestOnTheWire(method: GET, url: cursor.url, bearer: core.session.access_token)
 
     @guidance
-        -- A cursor that fails the check is protocol with the offending URL
-        -- in the message. The UI never builds or edits a cursor.
+        -- same_origin compares scheme, host and port with the session
+        -- domain's base URL, whose scheme is https outside D34. A cursor
+        -- that fails the check is protocol with the offending URL in the
+        -- message. The UI never builds or edits a cursor.
 }
 
 -- Navigation (App.Stack) -------------------------------------------------
@@ -2456,8 +2536,9 @@ invariant ABusyListHasNoError {
 --                                secret, the refresh token or the PKCE
 --                                verifier
 --   TokenOnlyToApiPaths          every request carrying Authorization goes
---                                over https to the session's host and port
---                                and a path under /api/
+--                                to the session's scheme, host and port,
+--                                the scheme being https outside D34, and
+--                                to a path under /api/
 --   NoHtmlInjection              no node is set through innerHTML; a
 --                                caption is text nodes and buttons
 --   ForeignBudgetHeld            every .js file under src/ is listed in
@@ -2490,7 +2571,7 @@ surface Platform {
     provides:
         ProcessStarted(os)
         AppStarted(os, stored, hash)
-        StoreUnreadable(os, message)
+        SessionUnanswered(os, message)
         HashChanged(os, route)
         WindowScrolled(os)
         RedirectReceived(os, state, code)
@@ -2947,7 +3028,10 @@ surface DevShell {
         -- Commands: nix develop; spago build, spago test, spago bundle;
         -- cargo tauri icon <png> once; cargo tauri dev; fish
         -- scripts/check.fish. The session file lands in
-        -- ~/.local/share/com.harryprayiv.pellucid/.
+        -- ~/.local/share/com.harryprayiv.pellucid/. A server on the same
+        -- machine: in the pellucid-server repository, fish
+        -- scripts/dev.fish db-start, create-account NAME and serve, then
+        -- sign in here to http://127.0.0.1:8080 (D34).
         -- devShells.android adds the Android SDK 34, NDK 26.1.10909125,
         -- JDK 17 and the four Android Rust targets (KnownIssue
         -- android_shell_untested).

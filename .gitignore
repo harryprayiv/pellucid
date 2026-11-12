@@ -6,3 +6,4 @@ src-tauri/icons/*
 dist
 dist/index.js
 dist/style.css
+dist/style.css

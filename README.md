@@ -32,7 +32,7 @@ Nothing here has spoken to a running server yet. Every screen has run against a 
 
 Pixelfed's `config/cors.php` allows no origins by default. Only `/api/v1/apps` and `/api/v2/instance` set `Access-Control-Allow-Origin`. Timelines, `/oauth/token` and `verify_credentials` send no CORS header at all. A web page in a browser cannot log in to a stock instance, so every request has to come from a native HTTP client. Pellucid's requests come from Rust.
 
-Since Rust has to make the requests anyway, the access token has no reason to exist in the webview. The webview receives the instance domain and the account id and handle, never the token, the client secret or the refresh token. The Rust side refuses to attach the token to any path outside `/api/` and to any pagination cursor that does not point at the logged-in instance over https.
+Since Rust has to make the requests anyway, the access token has no reason to exist in the webview. The webview receives the instance domain and the account id and handle, never the token, the client secret or the refresh token. The Rust side refuses to attach the token to any path outside `/api/` and to any pagination cursor that does not point at the origin the session was opened on. That origin is https, with one exception for development builds that is described under Testing against a server on the same machine.
 
 ## Architecture
 
@@ -65,12 +65,13 @@ There is no npm, no package.json and no node_modules. The frontend is spago pack
 These are invariants in `.inference/pellucid.allium` and the code is written to them.
 
 - The token never crosses the bridge. No command result and no event payload contains `access_token`, `client_secret` or `refresh_token`. The PKCE verifier never leaves Rust either.
-- The token goes only to `/api/` paths on the logged-in origin over https. A pagination cursor is dereferenced only after Rust parses it and checks the scheme, the host, the port and the path prefix. Uploads go to the fixed path `/api/v2/media` on that origin.
+- The token goes only to `/api/` paths on the logged-in origin, and that origin is https. A pagination cursor is dereferenced only after Rust parses it and checks the scheme, the host, the port and the path prefix. Uploads go to the fixed path `/api/v2/media` on that origin.
+- Plain http exists for one case. A development build accepts `http://127.0.0.1` with a port, typed with its scheme, for a server on the same machine, where the request never reaches a network. A release build refuses that address when it is typed and when it is read back from a saved session. No build turns an address into an http one: `http://` in front of any other host, the name `localhost` included, is reached over https.
 - Bytes leave the device only for a file the person picked. A picked file is read once in the webview, crosses the IPC once as a raw body, is never written to disk by the shell, and is refused by Rust before any network activity when empty or over 512 MiB.
 - No HTML is rendered as HTML. Captions are the server's `content_text`. When a server omits it, the HTML `content` is reduced to text and set as a text node. `innerHTML` is not used anywhere.
-- The webview's Content Security Policy allows scripts and styles from the bundle only, images and media over https, and the Tauri IPC origin. The capability file grants `core:default` and nothing else.
+- The webview's Content Security Policy allows scripts and styles from the bundle only, images and media over https, and the Tauri IPC origin. The policy of a development build (`devCsp`) also allows images and media from `http://127.0.0.1`. The capability file grants `core:default` and nothing else.
 - Redirects are limited to five and the HTTP client drops the Authorization header when the host changes.
-- The desktop session file is written atomically with mode 0600 under the application's data directory.
+- The desktop session file is written atomically with mode 0600 under the application's data directory. A session file that cannot be read starts the app signed out, and the next sign-in replaces the file.
 - Builds are delivered with zero warnings. `scripts/check.fish` is the executable form of that rule.
 
 ## Requirements
@@ -109,7 +110,7 @@ Everything up to the last step runs on a fresh clone. The last step needs the ic
 
 ## Tests
 
-`cargo test -p pixelfed-core` covers domain parsing and origin checks, the server name and version floor a nodeinfo document must meet, the Link header parser, request URL building and the refusal of non-API paths and foreign cursors, error message extraction, the session store's permissions and round trip, PKCE against the RFC 7636 appendix B vector and the freshness of generated verifiers, the upload bounds, and a real loopback OAuth round trip over a socket.
+`cargo test -p pixelfed-core` covers domain parsing and origin checks, what a development build and a release build each do with a plain http address, a session file that cannot be read, the server name and version floor a nodeinfo document must meet, the Link header parser, request URL building and the refusal of non-API paths and foreign cursors, error message extraction, the session store's permissions and round trip, PKCE against the RFC 7636 appendix B vector and the freshness of generated verifiers, the upload bounds, and a real loopback OAuth round trip over a socket.
 
 `spago test` runs 184 checks. It decodes fixtures shaped like Pixelfed's `StatusTransformer`, `RelationshipService`, `NotificationTransformer`, `MediaTransformer` as `POST /api/v2/media` returns it, the compose settings, context, search, hashtag, trending and direct message endpoints, including the lenient paths: string and null counters, a null `content_text`, the empty `liked_by` form, a share wrapper, a sparse remote account, a notification with an unknown verb and an unreadable status, a comma-joined media type list, an upload with a null `url`, lists that carry `false` and `[]` in place of an entry, and direct messages as both 0.12 and 0.15 send them. The fixtures carry uncast fields the way the server sends them (`is_nsfw` as `0`, `1` and null, a tagged post's `status_id` as a bare number), and a set of loose payloads checks that a post reduced to its id and account still decodes while one that cannot be identified fails with an error naming the field. It also tests the pure machines: the paged list, the navigation stack, the round trip of every route, caption links, and the merge rules for like, bookmark and share.
 
@@ -119,7 +120,7 @@ The bundled UI is also exercised end to end in a headless DOM against a mock of 
 
 `.inference/pellucid.allium` is the contract the client code is held to. It records the facts about Pixelfed the client depends on, each with where it was checked in Pixelfed's source, the decisions behind the design, every rule a screen implements, the invariants above, the surfaces, the known issues and the open questions. Where the code and the specification disagree, the specification records the intended behaviour and its IMPLEMENTATION STATUS section says which parts are built.
 
-The server Pellucid will need is specified in `pellucid-server.allium`, which moved to the `pellucid-server` repository with the first server code and lives in that repository's `.inference` directory. It covers accounts, OAuth with public clients and token revocation, media, posts, follows, blocks, direct messages, reports and moderation with notices and appeals, federation deliveries, and export, and records which of those are built. The client accepts that server's nodeinfo name, `pellucid`, beside `pixelfed`, each with its own version floor. It has not signed in to one yet, because none is deployed and the client reaches only https servers with a certificate from a public authority (known issue `client_refuses_this_server`).
+The server Pellucid will need is specified in `pellucid-server.allium`, which moved to the `pellucid-server` repository with the first server code and lives in that repository's `.inference` directory. It covers accounts, OAuth with public clients and token revocation, media, posts, follows, blocks, direct messages, reports and moderation with notices and appeals, federation deliveries, and export, and records which of those are built. The client accepts that server's nodeinfo name, `pellucid`, beside `pixelfed`, each with its own version floor. A development build signs in to one running on the same machine (see Testing against a server on the same machine). A release build has not signed in to one, because none is deployed and a release build reaches only https servers with a certificate from a public authority (known issue `client_refuses_this_server`).
 
 Both specifications pass `allium check` (allium-cli 3.6.1) with no errors and no warnings. Every lifecycle in them is a field named `status` with a transition graph, because that is the form the checker's state analysis covers: it rejects a rule that makes a transition the graph does not declare, a status no rule assigns and a status no rule leaves. The checker does not verify that the code matches the specification; that is done by reading, rule by rule.
 
@@ -147,7 +148,25 @@ Uploads are multipart `POST /api/v2/media` with `file`, built in Rust from bytes
 
 ## Testing against an instance
 
-pixelfed.social and any other public instance running 0.12.3 or newer work as they are. For destructive testing a throwaway instance is better. A NixOS module that stands one up with open registration, no email verification, every ActivityPub switch off and a Let's Encrypt certificate obtained by DNS-01 lives in the author's fleet configuration rather than in this repository; the specification's `LabInstance` surface describes it. The certificate matters because the client speaks https only and has no insecure mode.
+pixelfed.social and any other public instance running 0.12.3 or newer work as they are. For destructive testing a throwaway instance is better. A NixOS module that stands one up with open registration, no email verification, every ActivityPub switch off and a Let's Encrypt certificate obtained by DNS-01 lives in the author's fleet configuration rather than in this repository; the specification's `LabInstance` surface describes it. The certificate matters because the client speaks only https to another machine and trusts only the public certificate authorities compiled into it.
+
+## Testing against a server on the same machine
+
+A development build (`cargo tauri dev`) signs in to a `pellucid-server` running on the same machine over plain http. Start the server from the `pellucid-server` repository, inside its dev shell:
+
+```
+fish scripts/dev.fish db-start
+fish scripts/dev.fish create-account NAME
+fish scripts/dev.fish serve
+```
+
+The server prints the address it answers on, `http://127.0.0.1:8080`. Type exactly that into Pellucid's login screen, scheme included. The consent page opens in the system browser and asks for the account's name and password. Afterwards the settings screen names the session as `http://127.0.0.1:8080`.
+
+The scheme has to be typed. `127.0.0.1:8080` without it is taken as https, and so are `http://localhost:8080` and `http://` in front of any other host; none of those reaches a plain http server. Only the address `127.0.0.1` gets the exception, because a request to it does not leave the machine, whereas a name such as `localhost` is whatever the resolver says it is. A release build has no exception.
+
+The app holds one session, so log out of any other server first. Signing in to that server again afterwards brings it back.
+
+`pellucid-server` does not answer every route the client calls yet. It answers the ones behind the home and public feeds, profiles, follows, a post's own screen, composing a post with JPEG and PNG photos, and deleting a post. Everything else shows the server's 404 where it is used: likes, shares, bookmarks, comments, Alerts, Explore and search, direct messages, editing a post or the profile, mutes, blocks and reports.
 
 ## Repository layout
 
