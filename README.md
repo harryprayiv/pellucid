@@ -119,9 +119,9 @@ The bundled UI is also exercised end to end in a headless DOM against a mock of 
 
 `.inference/pellucid.allium` is the contract the client code is held to. It records the facts about Pixelfed the client depends on, each with where it was checked in Pixelfed's source, the decisions behind the design, every rule a screen implements, the invariants above, the surfaces, the known issues and the open questions. Where the code and the specification disagree, the specification records the intended behaviour and its IMPLEMENTATION STATUS section says which parts are built.
 
-`.inference/pellucid-server.allium` specifies the server Pellucid will need: accounts, OAuth with public clients and token revocation, media, posts, follows, blocks, direct messages, reports and moderation with notices and appeals, federation deliveries, and export. None of it is built. Its decisions S5 to S16 are proposals for what a less authoritarian server means and are marked as such.
+The server Pellucid will need is specified in `pellucid-server.allium`, which moved to the `pellucid-server` repository with the first server code and lives in that repository's `.inference` directory. It covers accounts, OAuth with public clients and token revocation, media, posts, follows, blocks, direct messages, reports and moderation with notices and appeals, federation deliveries, and export, and records which of those are built. This client cannot sign in to that server yet: the server gives its own name in nodeinfo and the client accepts only `pixelfed` (known issue `client_refuses_this_server`).
 
-Both files pass `allium check` (allium-cli 3.6.1) with no errors and no warnings. Every lifecycle in them is a field named `status` with a transition graph, because that is the form the checker's state analysis covers: it rejects a rule that makes a transition the graph does not declare, a status no rule assigns and a status no rule leaves. The checker does not verify that the code matches the specification; that is done by reading, rule by rule.
+Both specifications pass `allium check` (allium-cli 3.6.1) with no errors and no warnings. Every lifecycle in them is a field named `status` with a transition graph, because that is the form the checker's state analysis covers: it rejects a rule that makes a transition the graph does not declare, a status no rule assigns and a status no rule leaves. The checker does not verify that the code matches the specification; that is done by reading, rule by rule.
 
 Change the specification and the code together. A pull request that changes behaviour without touching the specification is incomplete.
 
@@ -153,7 +153,6 @@ pixelfed.social and any other public instance running 0.12.3 or newer work as th
 
 ```
 .inference/pellucid.allium          the client specification
-.inference/pellucid-server.allium   the server specification (nothing built)
 crates/pixelfed-core/          Rust: OAuth, session, transport (no UI)
 src-tauri/                     Rust: Tauri shell, commands, events, config
 src/                           PureScript: entities, decoders, client, screens
@@ -171,14 +170,3 @@ In order: the lab instance deployed and the first real login, feed, upload, post
 ## License
 
 AGPL-3.0-or-later. The license text belongs in `LICENSE` at the repository root.
-
-## 🤝 Contributing
-
-Contributions are welcome. Please feel free to submit a Pull Request.
-
-## Support
-
-
-If you like my style, Cardano ADA donations fund continued work. 
-
-[![Donate ADA](https://img.shields.io/badge/Donate-ADA-0033AD?style=for-the-badge&logo=cardano&logoColor=white)](https://cardanoscan.io/address/addr1qxankwszy6zaclef8vq5fjn3008689yswvangmz604npjhms7402kf0h964awtj8d6xz7lzlvnrq6hz6wu6k845pzkvspum4l7)

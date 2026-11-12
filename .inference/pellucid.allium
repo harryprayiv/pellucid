@@ -9,9 +9,11 @@
 -- intended behaviour and section IMPLEMENTATION STATUS says which rules
 -- are built.
 --
--- RELATION TO OTHER SPECS. pellucid-server.allium, in the same directory,
--- specifies the server Pellucid will need. Nothing in this file assumes
--- it: every rule here holds against stock Pixelfed. The fleet side of the
+-- RELATION TO OTHER SPECS. pellucid-server.allium specifies the server
+-- Pellucid will need and records how much of it is built. It lived in this
+-- directory until 2026-11-10 and is now in the .inference directory of the
+-- pellucid-server repository, beside the code it governs. Nothing in this
+-- file assumes it: every rule here holds against stock Pixelfed. The fleet side of the
 -- test instance is one NixOS module (pixelfed-lab.nix) and is described
 -- under surface LabInstance.
 --
@@ -1360,6 +1362,13 @@ default KnownIssue video_playback_unseen = {
     status: open,
     effect: "the dev shell listed no GStreamer plugin, so what the webview could play depended on plugins the host session exported, and WebKit logged a missing WebVTT encoder once per feed video. The flake now lists the plugins and sets their path. That change was parsed and its attributes evaluated against the locked nixpkgs. It has not been built or run, and nobody has yet watched a video play",
     closes_when: "from the dev shell on winsmuth, cargo tauri dev no longer prints the WebVTT line and a video in the home feed plays with sound"
+}
+
+default KnownIssue client_refuses_this_server = {
+    name: "the client cannot sign in to a Pellucid server",
+    status: open,
+    effect: "check_software accepts one nodeinfo name, pixelfed, and the core has a test that a server named pellucid is refused. pellucid-server gives its own name (its decision S17), so the probe refuses it before login begins. The client is also https only (D5), so a server on a developer's machine cannot be reached without a certificate",
+    closes_when: "check_software accepts pellucid as well as a recent pixelfed, with a test for each, and a session against a deployed pellucid-server has signed in, posted a photo and read it back. The same entry is in pellucid-server.allium"
 }
 
 default KnownIssue back_on_first_screen_did_nothing = {
@@ -2967,7 +2976,7 @@ deferred Pixelfed.entities             -- see: app/Transformer/Api/*.php and app
 deferred Tauri.config                  -- see: https://schema.tauri.app/config/2
 deferred Tauri.mobile                  -- see: cargo tauri android init, tauri-plugin-deep-link
 deferred Nixpkgs.pixelfed              -- see: nixos/modules/services/web-apps/pixelfed.nix
-deferred Pellucid.server               -- see: pellucid-server.allium
+deferred Pellucid.server               -- see: pellucid-server.allium in the pellucid-server repository
 
 ------------------------------------------------------------
 -- Open Questions
