@@ -170,3 +170,14 @@ In order: the lab instance deployed and the first real login, feed, upload, post
 ## License
 
 AGPL-3.0-or-later. The license text belongs in `LICENSE` at the repository root.
+
+## 🤝 Contributing
+
+Contributions are welcome. Please feel free to submit a Pull Request.
+
+## Support
+
+
+If you like my style, Cardano ADA donations fund continued work. 
+
+[![Donate ADA](https://img.shields.io/badge/Donate-ADA-0033AD?style=for-the-badge&logo=cardano&logoColor=white)](https://cardanoscan.io/address/addr1qxankwszy6zaclef8vq5fjn3008689yswvangmz604npjhms7402kf0h964awtj8d6xz7lzlvnrq6hz6wu6k845pzkvspum4l7)
