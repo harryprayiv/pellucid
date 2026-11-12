@@ -224,7 +224,8 @@
 --     in one run of cargo tauri dev from a shell with no GStreamer
 --     package in it.
 --
--- DECISIONS. D1 to D22 were taken 2026-11-09; D23 to D32 on 2026-11-10.
+-- DECISIONS. D1 to D22 were taken 2026-11-09; D23 to D32 on 2026-11-10;
+-- D33 on 2026-11-11.
 --
 --   D1. SCOPE. A client for the existing Pixelfed protocol first. The
 --       server is a later project with its own spec.
@@ -352,6 +353,15 @@
 --        30, a bio at 200, a website at 120, a content warning at 140, a
 --        search at 100. Each is the server's own validation rule; where
 --        versions differ the lower one is used.
+--   D33. TWO KINDS OF SERVER. The client signs in to a Pixelfed at
+--        min_pixelfed_version or newer and to a pellucid-server at
+--        min_pellucid_version or newer, told apart by the name each gives
+--        for itself in nodeinfo. Each kind has its own floor: Pixelfed's
+--        is not applied to a Pellucid server, whose first release is
+--        0.1.0. Any other name is refused. pellucid-server speaks the
+--        same client API, and where its answers differ from Pixelfed's
+--        they are the stricter form (every id a string, every flag a
+--        boolean), which the decoders of D8 already read.
 --
 -- IMPLEMENTATION STATUS at 2026-11-10 (the fourth batch and, later the
 -- same day, the decoder revision that followed the first real login):
@@ -362,7 +372,8 @@
 --              ListScreens, PostDetailScreen, FormScreens, ExploreScreen,
 --              ProfileScreen, ThreadScreen, NotificationsScreen,
 --              ComposeScreen, SettingsScreen, DevShell. The Rust core has
---              22 unit tests;
+--              23 unit tests, one of them for the Pellucid server's
+--              name and floor (D33, 2026-11-11);
 --              the PureScript side has 184 checks (decoders against
 --              fixtures shaped like the server's transformers, uncast
 --              fields included, and against loose payloads; the paging
@@ -630,10 +641,13 @@ contract CoreApi {
     session_summary: () -> SessionSummary
 
     @invariant ServerNameIsTheServers
-        -- probe accepts a server whose nodeinfo software.name is pixelfed,
-        -- compared without case, and whose version is at least
-        -- min_pixelfed_version. The name is the server's, never this
-        -- app's (instance::check_software, SERVER_SOFTWARE).
+        -- probe accepts a server whose nodeinfo software.name is
+        -- pixelfed or pellucid, compared without case, and whose version
+        -- is at least that kind's floor (D33). The name compared is the
+        -- one the server gives for itself. The server software pellucid
+        -- and this app share a name; a server is accepted for running
+        -- that software at a supported version, and for no other reason
+        -- (instance::check_software, SUPPORTED_SERVERS).
 
     @invariant ApiPathsOnly
         -- api_request refuses a path not starting with /api/ before any
@@ -1206,6 +1220,7 @@ entity KnownIssue {
 
 config {
     min_pixelfed_version: String = "0.12.3"
+    min_pellucid_version: String = "0.1.0"
     scopes: String = "read write follow push"
     client_name: String = "Pellucid"
     client_website: String = "https://harryprayiv.com"
@@ -1365,10 +1380,10 @@ default KnownIssue video_playback_unseen = {
 }
 
 default KnownIssue client_refuses_this_server = {
-    name: "the client cannot sign in to a Pellucid server",
+    name: "the client has not signed in to a Pellucid server",
     status: open,
-    effect: "check_software accepts one nodeinfo name, pixelfed, and the core has a test that a server named pellucid is refused. pellucid-server gives its own name (its decision S17), so the probe refuses it before login begins. The client is also https only (D5), so a server on a developer's machine cannot be reached without a certificate",
-    closes_when: "check_software accepts pellucid as well as a recent pixelfed, with a test for each, and a session against a deployed pellucid-server has signed in, posted a photo and read it back. The same entry is in pellucid-server.allium"
+    effect: "check_software accepts the name pellucid as of 2026-11-11 (D33), and every answer of a two-account session against a running pellucid-server was read by the decoders and by the core's structs. What is left is reach: the client is https only (D5) and its TLS trusts the public certificate authorities compiled into it and no others, so it cannot reach a server on a developer's machine, and no server is deployed",
+    closes_when: "a session against a deployed pellucid-server has signed in, posted a photo and read it back. The same entry is in pellucid-server.allium"
 }
 
 default KnownIssue back_on_first_screen_did_nothing = {
@@ -1452,8 +1467,7 @@ rule BrowserOpened {
     let domain = parse_domain(domain_text)
     let server = Instance{domain: domain}
     requires: exists server
-    requires: server.software = "pixelfed"
-    requires: version_at_least(server.version, config.min_pixelfed_version)
+    requires: (server.software = "pixelfed" and version_at_least(server.version, config.min_pixelfed_version)) or (server.software = "pellucid" and version_at_least(server.version, config.min_pellucid_version))
     let pkce = fresh_pkce()
     ensures:
         let pending = PendingLogin.created(
@@ -1475,8 +1489,8 @@ rule BrowserOpened {
         -- describes it. ConsentPageOpened is the operating system's
         -- browser showing the instance's own consent page; the app never
         -- embeds a login page. In order: the domain is parsed, nodeinfo is
-        -- probed (software pixelfed, version at least
-        -- min_pixelfed_version), a listener is
+        -- probed (software pixelfed or pellucid, at that kind's
+        -- minimum version or newer, D33), a listener is
         -- bound on 127.0.0.1:0, a client is registered with that port as its
         -- redirect URI, and the authorize URL (client_id,
         -- redirect_uri, response_type=code, scope, state, code_challenge,
