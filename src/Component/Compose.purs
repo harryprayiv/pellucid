@@ -1,7 +1,9 @@
 -- | A new post. Files upload as soon as they are picked (POST /api/v2/media
--- | through the shell), alt text is saved per attachment, and the status is
--- | created last with the media ids. Pixelfed refuses a status with neither
--- | media nor a parent, so Post stays disabled until every upload is done.
+-- | through the shell). Pressing Post saves each attachment's alt text and
+-- | then creates the status with the media ids, in that order and from that
+-- | one place, so no description is still on its way when the status is
+-- | made. Pixelfed refuses a status with neither media nor a parent, so Post
+-- | stays disabled until every upload is done.
 module Component.Compose (component) where
 
 import Prelude
@@ -15,7 +17,7 @@ import Data.Array as Array
 import Data.Either (Either(..), isRight)
 import Data.Foldable (for_)
 import Data.Int (toNumber)
-import Data.Maybe (Maybe(..), fromMaybe, maybe)
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.String (joinWith, trim)
 import Data.String as String
 import Data.Tuple (Tuple(..))
@@ -30,12 +32,11 @@ import Halogen.HTML.Properties as HP
 import Pixelfed.Client (composeSettings, createPost, updateMediaDescription, uploadMedia)
 import Pixelfed.Decode (decodeVisibility)
 import Pixelfed.Entity (ComposeSettings, MediaAttachment, MediaId, Visibility(..), statusId, visibilityName)
-import Util.File (mimeOf, readBytes)
+import Util.File (mimeOf, readBytes, takeFiles)
 import View.Common (cls, iconButton, screenHeader)
 import Web.Event.Event (Event, preventDefault, target)
 import Web.File.File (File)
 import Web.File.File as File
-import Web.File.FileList as FileList
 import Web.HTML.HTMLInputElement as Input
 
 -- | One picked file and what has become of it.
@@ -48,7 +49,6 @@ type Item =
   , altText :: String
   -- | The description the server currently holds for this attachment.
   , altSaved :: String
-  , altBusy :: Boolean
   , altError :: Maybe String
   }
 
@@ -75,7 +75,6 @@ data Action
   | FilesPicked Event
   | RemoveItem Int
   | SetAlt Int String
-  | SaveAlt Int
   | SetCaption String
   | SetVisibility String
   | SetSensitive Boolean
@@ -133,7 +132,6 @@ canPost :: State -> Boolean
 canPost s =
   not (Array.null s.items)
     && Array.all isUploaded s.items
-    && not (Array.any _.altBusy s.items)
     && notPosting
     && String.length s.caption <= s.settings.maxCaptionLength
     && (not s.sensitive || String.length s.spoilerText <= maxSpoilerLength)
@@ -292,17 +290,11 @@ itemView settings it =
                 [ HP.value it.altText
                 , HP.placeholder "Describe this for people who cannot see it"
                 , HP.rows 2
-                , HP.disabled it.altBusy
                 , HP.attr (HH.AttrName "maxlength") (show settings.maxAltTextLength)
                 , HE.onValueInput (SetAlt it.key)
-                , HE.onBlur \_ -> SaveAlt it.key
                 ]
             , HH.span [ cls "muted counter-text" ]
-                [ HH.text
-                    if it.altBusy then "Saving\x2026"
-                    else if trim it.altText /= "" && trim it.altText == it.altSaved then "Saved"
-                    else show (String.length it.altText) <> "/" <> show settings.maxAltTextLength
-                ]
+                [ HH.text (show (String.length it.altText) <> "/" <> show settings.maxAltTextLength) ]
             , case it.altError of
                 Just err -> HH.p [ cls "error" ] [ HH.text err ]
                 Nothing -> HH.text ""
@@ -330,11 +322,7 @@ handleAction = case _ of
   FilesPicked event -> do
     files <- liftEffect $ case target event >>= Input.fromEventTarget of
       Nothing -> pure []
-      Just input -> do
-        list <- Input.files input
-        -- Clear the input so the same file can be picked again later.
-        Input.setValue "" input
-        pure (maybe [] FileList.items list)
+      Just input -> takeFiles input
     state <- H.get
     let
       room = max 0 (state.settings.maxMediaAttachments - Array.length state.items)
@@ -347,12 +335,6 @@ handleAction = case _ of
   RemoveItem key -> H.modify_ \s -> s { items = Array.filter (\it -> it.key /= key) s.items }
 
   SetAlt key text -> modifyItem key _ { altText = text, altError = Nothing }
-
-  SaveAlt key -> do
-    items <- H.gets _.items
-    case Array.find (\it -> it.key == key) items of
-      Just it | needsAltSave it -> saveAlt it
-      _ -> pure unit
 
   SetCaption text -> H.modify_ \s -> s
     { caption = text
@@ -421,7 +403,6 @@ addFile file = do
       , phase: verdict
       , altText: ""
       , altSaved: ""
-      , altBusy: false
       , altError: Nothing
       }
   H.modify_ \s -> s { items = Array.snoc s.items item, nextKey = key + 1 }
@@ -449,28 +430,15 @@ modifyItem key f = H.modify_ \s -> s { items = map (\it -> if it.key == key then
 
 needsAltSave :: Item -> Boolean
 needsAltSave it = case it.phase of
-  Uploaded _ -> not it.altBusy && trim it.altText /= it.altSaved
+  Uploaded _ -> trim it.altText /= it.altSaved
   _ -> false
 
--- | PUT /api/v1/media/{id} with the description; the server's answer is the
--- | attachment, whose description becomes the saved text.
-saveAlt :: forall o m. MonadAff m => MonadAsk Env m => Item -> H.HalogenM State Action () o m Unit
-saveAlt it = case it.phase of
-  Uploaded m -> do
-    backend <- asks _.backend
-    let text = trim it.altText
-    modifyItem it.key _ { altBusy = true, altError = Nothing }
-    result <- liftAff (updateMediaDescription backend m.id text)
-    modifyItem it.key \current -> case result of
-      Left err -> current { altBusy = false, altError = Just (printAppError err) }
-      Right updated -> current
-        { altBusy = false
-        , altSaved = fromMaybe text updated.description
-        , phase = Uploaded updated { url = m.url, previewUrl = m.previewUrl }
-        }
-  _ -> pure unit
-
--- | Saves every pending alt text in parallel; false when any save failed.
+-- | PUT /api/v1/media/{id} with the description, for every attachment whose
+-- | text differs from what the server holds, in parallel; false when any
+-- | save failed. Pressing Post is the only thing that calls this. Saving
+-- | when a field lost focus as well, as this screen once did, meant that the
+-- | press on Post which took the focus away arrived while that save was
+-- | under way and was dropped.
 flushAlt :: forall o m. MonadAff m => MonadAsk Env m => H.HalogenM State Action () o m Boolean
 flushAlt = do
   backend <- asks _.backend

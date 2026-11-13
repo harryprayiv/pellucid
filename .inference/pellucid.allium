@@ -225,7 +225,7 @@
 --     package in it.
 --
 -- DECISIONS. D1 to D22 were taken 2026-11-09; D23 to D32 on 2026-11-10;
--- D33 and D34 on 2026-11-11.
+-- D33 and D34 on 2026-11-11; D35 on 2026-11-13.
 --
 --   D1. SCOPE. A client for the existing Pixelfed protocol first. The
 --       server is a later project with its own spec.
@@ -386,9 +386,20 @@
 --        other users, whoever binds the port is the server, and receives
 --        the password typed into the consent page and the token after
 --        it.
+--   D35. ALT TEXT IS SAVED WHEN POST IS PRESSED, AND AT NO OTHER TIME.
+--        Pressing Post saves each attachment's description and then
+--        creates the status, in that order. Until 2026-11-13 a
+--        description was also saved when its field lost focus. Pressing
+--        Post is what takes the focus away, so that press arrived while
+--        the save was under way, found the composer unable to post, and
+--        was dropped: someone who had just written a description had to
+--        press Post twice. With one place that saves, no description is
+--        on its way when the status is made and an item has no state
+--        for a save in flight.
 --
--- IMPLEMENTATION STATUS at 2026-11-11 (the fourth batch, the decoder
--- revision that followed the first real login, then D33 and D34):
+-- IMPLEMENTATION STATUS at 2026-11-13 (the fourth batch, the decoder
+-- revision that followed the first real login, D33 and D34, then the
+-- composer's two faults and D35):
 --
 --   BUILT      D2 to D9, D11, D13 to D15, D17, D19 to D34. Every rule in
 --              this file. Surfaces Platform, InstanceAnswers, Bridge,
@@ -403,7 +414,7 @@
 --              fixtures shaped like the server's transformers, uncast
 --              fields included, and against loose payloads; the paging
 --              machine, the navigation stack, the route codec, caption
---              links, the merge rules); the bundled UI passes a 122-step
+--              links, the merge rules); the bundled UI passes a 124-step
 --              headless run against a mock of contract Shell (KnownIssue
 --              smoke_harness_external). The shell crate compiles and is
 --              clippy-clean.
@@ -434,6 +445,40 @@
 --              tests also pass compiled as a release build, in which the
 --              address of D34 is refused and a saved session carrying it
 --              does not read back.
+--              2026-11-12: on winsmuth, as reported from there, cargo
+--              tauri dev signed in to a pellucid-server on the same
+--              machine. Where this spec is written, the same debug
+--              binary against that server's new routes, with no change
+--              to the client: a like, a bookmark and a comment made in
+--              the app and shown by it; the list of who likes a post;
+--              and Alerts with a follow, a comment and a like, the
+--              comment's row opening its post with the comment in place.
+--              2026-11-13: it was reported from winsmuth that posting a
+--              photo from the composer did not work. It could not have,
+--              in any webview, since the composer was written: the
+--              handler read the input's list of files, cleared the input
+--              so the same file could be picked again, and only then
+--              looked in the list, which a webview empties in place when
+--              the input is cleared. Picking a file added no row and
+--              said nothing. The headless run did not see it because its
+--              stand-in for the input kept the list after the clear; it
+--              now empties it as a webview does, and has two more steps.
+--              Util.File.takeFiles copies the files out and clears the
+--              input in one effect, in that order. The composer was then
+--              driven in the real webview through WebDriver
+--              (tauri-driver over WebKitWebDriver, WebKitGTK 2.52.6),
+--              which sets a file input without the dialog that the
+--              synthetic keyboard of 2026-11-11 could not use, both in
+--              the debug binary alone and in the binary cargo tauri dev
+--              builds with the page served from that command's own web
+--              server: a file picked, its row and thumbnail shown, a
+--              caption typed, Post pressed, and the post's own screen
+--              reached with the picture. The bytes travelled as the raw
+--              IPC body both times, with no fall back to posting a
+--              message. That run also found the fault D35 removes, and
+--              afterwards a description typed and Post pressed once made
+--              the post with the description on the server. None of
+--              this has been run on winsmuth yet.
 --   PARTIAL    D10: the desktop redirect is built and tested; the deep
 --              link branch is not written. D12: FileStore only. D16: the
 --              module is written and parses; it has not been deployed.
@@ -1235,7 +1280,6 @@ entity ComposeItem {
     reason: String when status = rejected
     alt_text: String
     alt_saved: String
-    alt_busy: Boolean
 
     transitions status {
         uploading -> uploaded
@@ -1347,7 +1391,7 @@ default KnownIssue orphan_uploads = {
 default KnownIssue smoke_harness_external = {
     name: "the headless UI run is not in the repository",
     status: open,
-    effect: "scripts/check.fish does not run it; the 122 checks that drive every screen against a mock of contract Shell exist only where the port was written, so a change can pass the gate and break a screen. The run is JavaScript on jsdom, which is why it was not delivered",
+    effect: "scripts/check.fish does not run it; the 124 checks that drive every screen against a mock of contract Shell exist only where the port was written, so a change can pass the gate and break a screen. The run is JavaScript on jsdom, which is why it was not delivered. A mock is also only as true as its author's idea of a webview: until 2026-11-13 its file input kept its list of files after being cleared, which no webview does, and the composer's fault passed it. The same day the real webview was driven through WebDriver for the first time, which is also outside the repository",
     closes_when: "the screens' transitions are pure functions tested by spago test, as App.Paged and App.Stack already are, or a DOM driver that needs no npm package runs the bundle"
 }
 
@@ -1452,7 +1496,7 @@ default KnownIssue video_playback_unseen = {
 default KnownIssue client_refuses_this_server = {
     name: "the client has not signed in to a Pellucid server",
     status: open,
-    effect: "check_software accepts the name pellucid (D33), and a development build reaches a server on its own machine (D34). On 2026-11-11, where this spec is written, the debug binary of the desktop shell signed in to a pellucid-server at http://127.0.0.1:8080 through its own login screen and showed the feeds, a profile, a follow and a post with their pictures; uploads and posts went through the core (status RUN). What is left: the same on winsmuth with a real browser and a file chosen in the composer, and a release build, which is https only (D5), trusts the public certificate authorities compiled into it and no others, and so needs a deployed server, of which there is none",
+    effect: "check_software accepts the name pellucid (D33), and a development build reaches a server on its own machine (D34). On 2026-11-11, where this spec is written, the debug binary of the desktop shell signed in to a pellucid-server at http://127.0.0.1:8080 through its own login screen and showed the feeds, a profile, a follow and a post with their pictures; uploads and posts went through the core (status RUN). On 2026-11-12 the same was done on winsmuth with a real browser, as reported from there, and on 2026-11-13 that posting from the composer did not work there. The cause was the composer's own (status RUN) and is corrected where this spec is written. What is left: a photo posted from the composer on winsmuth, and a release build, which is https only (D5), trusts the public certificate authorities compiled into it and no others, needs a deployed server, of which there is none",
     closes_when: "a session against a deployed pellucid-server has signed in, posted a photo and read it back. The same entry is in pellucid-server.allium"
 }
 
@@ -2369,9 +2413,9 @@ rule MediaPicked {
     requires: composer.items.count < composer.settings.max_media_attachments
     ensures:
         if size_bytes > composer.settings.max_file_size_kb * 1024:
-            ComposeItem.created(composer: composer, key: fresh_item_key(composer), name: name, mime: mime, size_bytes: size_bytes, status: rejected, reason: "larger than the instance allows", alt_text: "", alt_saved: "", alt_busy: false)
+            ComposeItem.created(composer: composer, key: fresh_item_key(composer), name: name, mime: mime, size_bytes: size_bytes, status: rejected, reason: "larger than the instance allows", alt_text: "", alt_saved: "")
         else:
-            ComposeItem.created(composer: composer, key: fresh_item_key(composer), name: name, mime: mime, size_bytes: size_bytes, status: uploading, alt_text: "", alt_saved: "", alt_busy: false)
+            ComposeItem.created(composer: composer, key: fresh_item_key(composer), name: name, mime: mime, size_bytes: size_bytes, status: uploading, alt_text: "", alt_saved: "")
 
     @guidance
         -- A type the instance does not list is rejected the same way. The
@@ -2399,14 +2443,16 @@ rule MediaUploadFailed {
 
 rule AltTextSaved {
     when: AltTextAnswered(_, item, description)
-    requires: item.status = uploaded and item.alt_busy
+    requires: item.status = uploaded and item.composer.status = posting_now
     ensures:
-        item.alt_busy = false
         item.alt_saved = description
 
     @guidance
-        -- Sent with PUT /api/v1/media/{id} when the field loses focus and
-        -- again, for anything still unsaved, before the post is created.
+        -- Sent with PUT /api/v1/media/{id} for every item whose text
+        -- differs from what the server holds, after Post is pressed and
+        -- before the post is created, and at no other time (D35). If
+        -- any of them fails the post is not created and the composer
+        -- says so.
 }
 
 rule PostSubmitted {
@@ -2969,7 +3015,6 @@ surface ComposeScreen {
             item.status
             item.alt_text
             item.alt_saved
-            item.alt_busy
 
     provides:
         FilePicked(viewer, composer, name, mime, size_bytes)

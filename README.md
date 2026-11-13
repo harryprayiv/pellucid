@@ -166,7 +166,7 @@ The scheme has to be typed. `127.0.0.1:8080` without it is taken as https, and s
 
 The app holds one session, so log out of any other server first. Signing in to that server again afterwards brings it back.
 
-`pellucid-server` does not answer every route the client calls yet. It answers the ones behind the home and public feeds, profiles, follows, a post's own screen, composing a post with JPEG and PNG photos, and deleting a post. Everything else shows the server's 404 where it is used: likes, shares, bookmarks, comments, Alerts, Explore and search, direct messages, editing a post or the profile, mutes, blocks and reports.
+`pellucid-server` does not answer every route the client calls yet. It answers the ones behind the home and public feeds, profiles, follows, a post's own screen with its comments, likes and who likes a post, bookmarks, Alerts, composing a post with JPEG and PNG photos, and deleting a post or a comment. Everything else shows the server's 404 where it is used: shares, Explore and search, hashtags, direct messages, editing a post or the profile, follow requests, mutes, blocks and reports.
 
 ## Repository layout
 
@@ -189,14 +189,3 @@ In order: the lab instance deployed and the first real login, feed, upload, post
 ## License
 
 AGPL-3.0-or-later. The license text belongs in `LICENSE` at the repository root.
-
-## 🤝 Contributing
-
-Contributions are welcome. Please feel free to submit a Pull Request.
-
-## Support
-
-
-If you like my style, Cardano ADA donations fund continued work. 
-
-[![Donate ADA](https://img.shields.io/badge/Donate-ADA-0033AD?style=for-the-badge&logo=cardano&logoColor=white)](https://cardanoscan.io/address/addr1qxankwszy6zaclef8vq5fjn3008689yswvangmz604npjhms7402kf0h964awtj8d6xz7lzlvnrq6hz6wu6k845pzkvspum4l7)
